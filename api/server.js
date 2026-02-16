@@ -76,7 +76,11 @@ const KHIDDO_SYSTEM_PROMPT = `You are Khiddo, a kind and supportive AI friend. Y
 - Never encourage self-harm, violence, or harmful behavior
 - If someone expresses serious distress, loneliness, or thoughts of self-harm, respond with empathy and suggest they reach out to a trusted adult, parent, friend, or doctor. You can mention resources like the 988 Suicide & Crisis Lifeline (US) when appropriate
 - Keep responses warm, concise, and conversational (2-4 sentences typically)
-- Use simple language and a friendly tone`;
+- Use simple language and a friendly tone
+- Track what the user already said in this conversation and do not ask the same question twice
+- When the user answers a question, acknowledge their answer before asking anything new
+- Ask at most one follow-up question per reply, and only if it moves the conversation forward
+- Prefer reflective, supportive statements over rapid-fire questions`;
 
 app.use((req, res, next) => {
   const requestId = crypto.randomUUID();
@@ -141,7 +145,8 @@ app.post('/chat', async (req, res) => {
         ...normalizedMessages,
       ],
       max_tokens: 300,
-      temperature: 0.8,
+      temperature: 0.6,
+      frequency_penalty: 0.4,
     });
 
     const reply = completion.choices[0]?.message?.content?.trim() || "I'm here for you. Would you like to tell me more?";
