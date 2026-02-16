@@ -16,7 +16,7 @@ import { Video, ResizeMode } from 'expo-av';
 import { ThemedView } from '@/components/themed-view';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Routes } from '@/types/navigation';
-import { sendChatMessage, type ChatMessage } from '@/lib/chat-api';
+import { resetPhase1Session, sendChatMessage, type ChatMessage } from '@/lib/chat-api';
 
 type Message = { role: 'user' | 'avatar'; text: string };
 
@@ -66,13 +66,17 @@ export default function AvatarScreen() {
         .map((m) => ({ role: m.role, text: m.text }));
       const reply = await sendChatMessage(chatMessages);
       setMessages((prev) => [...prev, { role: 'avatar', text: reply }]);
-    } catch (err) {
+    } catch {
       const fallback = getFallbackResponse();
       setMessages((prev) => [...prev, { role: 'avatar', text: fallback }]);
     } finally {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    resetPhase1Session();
+  }, []);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -166,7 +170,7 @@ export default function AvatarScreen() {
                 style={styles.quickPrompt}
                 onPress={() => setMessage("I'd like to talk")}
                 activeOpacity={0.7}>
-                <Text style={styles.quickPromptText}>I'd like to talk</Text>
+                <Text style={styles.quickPromptText}>I&apos;d like to talk</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.quickPrompt}

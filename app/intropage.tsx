@@ -2,7 +2,6 @@ import React from 'react';
 import { StyleSheet, View, SafeAreaView, Text, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
 import { Routes } from '@/types/navigation';
@@ -199,4 +198,3 @@ const styles = StyleSheet.create({
     width: 175,
   },
 });
-
