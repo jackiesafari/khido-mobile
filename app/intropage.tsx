@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
 import { Routes } from '@/types/navigation';
+import { clearSession } from '@/lib/auth';
 
 /**
  * IntroPage - The first screen users see when opening the app
@@ -21,22 +22,17 @@ import { Routes } from '@/types/navigation';
  */
 export default function IntroPage() {
   const handleDemo = () => {
+    clearSession();
     // Navigate to dashboard
     router.push(Routes.DASHBOARD);
   };
 
   const handleLogin = () => {
-    // Navigate to login screen
-    // TODO: Implement login navigation when auth is ready
-    // router.push(Routes.LOGIN);
-    console.log('Login pressed - auth flow to be implemented');
+    router.push(Routes.AUTH);
   };
 
   const handleSignUp = () => {
-    // Navigate to signup screen
-    // TODO: Implement signup navigation when auth is ready
-    // router.push(Routes.SIGNUP);
-    console.log('Sign up pressed - auth flow to be implemented');
+    router.push(Routes.AUTH);
   };
 
   return (

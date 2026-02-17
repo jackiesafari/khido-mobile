@@ -13,6 +13,7 @@
 export type RootStackParamList = {
   index: undefined;
   intropage: undefined;
+  auth: undefined;
   dashboard: undefined;
   avatar: undefined;
   // Auth routes (to be implemented)
@@ -27,10 +28,10 @@ export type RootStackParamList = {
 export const Routes = {
   INDEX: '/',
   INTRO: '/intropage',
+  AUTH: '/auth',
   DASHBOARD: '/dashboard',
   AVATAR: '/avatar',
   // Auth routes (to be implemented)
   // SIGNUP: '/auth/signup',
 } as const;
-
 

@@ -24,6 +24,8 @@ const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'db.json');
 const DATABASE_URL = process.env.DATABASE_URL || null;
+const SUPABASE_URL = process.env.SUPABASE_URL || null;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || null;
 const MODES = ['companion', 'advocacy', 'regulation'];
 const MESSAGE_ROLES = ['user', 'assistant'];
 
@@ -48,9 +50,7 @@ function getDefaultLocalDb() {
 }
 
 function loadLocalDb() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(DATA_FILE)) {
     const db = getDefaultLocalDb();
     fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
@@ -65,7 +65,6 @@ function loadLocalDb() {
 }
 
 const localDb = loadLocalDb();
-
 function saveLocalDb() {
   fs.writeFileSync(DATA_FILE, JSON.stringify(localDb, null, 2));
 }
@@ -88,14 +87,12 @@ function rateLimit(req, res, next) {
     ipBuckets.set(ip, { count: 1, windowStart: now });
     return next();
   }
-
   bucket.count += 1;
   if (bucket.count > RATE_LIMIT_MAX_REQUESTS) {
     const retryAfterSeconds = Math.ceil((RATE_LIMIT_WINDOW_MS - (now - bucket.windowStart)) / 1000);
     res.set('Retry-After', String(retryAfterSeconds));
     return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
   }
-
   return next();
 }
 
@@ -204,9 +201,7 @@ async function generateAssistantReply({ mode, messages, profile, memoryFacts, re
   if (!openai) {
     throw Object.assign(new Error('Server is not fully configured. Missing OPENAI_API_KEY.'), { statusCode: 503 });
   }
-
   const systemPrompt = buildSystemPrompt({ mode, profile, memoryFacts, recentAssistantQuestions });
-
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [{ role: 'system', content: systemPrompt }, ...messages],
@@ -214,8 +209,21 @@ async function generateAssistantReply({ mode, messages, profile, memoryFacts, re
     temperature: 0.6,
     frequency_penalty: 0.4,
   });
-
   return completion.choices[0]?.message?.content?.trim() || "I'm here for you. Would you like to tell me more?";
+}
+
+async function resolveSupabaseUserFromAuthHeader(authHeader) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: authHeader,
+    },
+  });
+  if (!response.ok) return null;
+  return response.json();
 }
 
 function createStore() {
@@ -234,12 +242,14 @@ function createStore() {
           CREATE TABLE IF NOT EXISTS users (
             id UUID PRIMARY KEY,
             created_at TIMESTAMPTZ NOT NULL,
+            auth_user_id TEXT UNIQUE,
             display_name TEXT,
             age_band TEXT,
             locale TEXT,
             timezone TEXT,
             pronouns TEXT
           );
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_user_id TEXT UNIQUE;
           CREATE TABLE IF NOT EXISTS consents (
             user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             chat_personalization_enabled BOOLEAN NOT NULL,
@@ -300,6 +310,7 @@ function createStore() {
         const user = {
           id: crypto.randomUUID(),
           createdAt: nowISO(),
+          authUserId: payload.authUserId || null,
           displayName: payload.displayName || null,
           ageBand: payload.ageBand || null,
           locale: payload.locale || 'en-US',
@@ -307,9 +318,18 @@ function createStore() {
           pronouns: payload.pronouns || null,
         };
         await pool.query(
-          `INSERT INTO users (id, created_at, display_name, age_band, locale, timezone, pronouns)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [user.id, user.createdAt, user.displayName, user.ageBand, user.locale, user.timezone, user.pronouns]
+          `INSERT INTO users (id, created_at, auth_user_id, display_name, age_band, locale, timezone, pronouns)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            user.id,
+            user.createdAt,
+            user.authUserId,
+            user.displayName,
+            user.ageBand,
+            user.locale,
+            user.timezone,
+            user.pronouns,
+          ]
         );
         await pool.query(
           `INSERT INTO consents
@@ -331,18 +351,50 @@ function createStore() {
         return user;
       },
       async findGuestUser() {
-        const result = await pool.query(`SELECT * FROM users WHERE display_name = 'Guest' LIMIT 1`);
-        if (!result.rows[0]) return null;
+        const result = await pool.query(`SELECT * FROM users WHERE display_name = 'Guest' AND auth_user_id IS NULL LIMIT 1`);
         const row = result.rows[0];
+        if (!row) return null;
         return {
           id: row.id,
           createdAt: row.created_at,
+          authUserId: row.auth_user_id,
           displayName: row.display_name,
           ageBand: row.age_band,
           locale: row.locale,
           timezone: row.timezone,
           pronouns: row.pronouns,
         };
+      },
+      async getUserByAuthUserId(authUserId) {
+        const result = await pool.query('SELECT * FROM users WHERE auth_user_id = $1 LIMIT 1', [authUserId]);
+        const row = result.rows[0];
+        if (!row) return null;
+        return {
+          id: row.id,
+          createdAt: row.created_at,
+          authUserId: row.auth_user_id,
+          displayName: row.display_name,
+          ageBand: row.age_band,
+          locale: row.locale,
+          timezone: row.timezone,
+          pronouns: row.pronouns,
+        };
+      },
+      async getOrCreateUserForAuth(authUser, payload = {}) {
+        const existing = await this.getUserByAuthUserId(authUser.id);
+        if (existing) return existing;
+
+        const displayName =
+          payload.displayName ||
+          authUser.user_metadata?.name ||
+          authUser.email?.split('@')?.[0] ||
+          'Friend';
+        return this.createUser({
+          authUserId: authUser.id,
+          displayName,
+          locale: payload.locale || authUser.user_metadata?.locale || 'en-US',
+          timezone: payload.timezone || 'America/New_York',
+        });
       },
       async getUserById(userId) {
         const result = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
@@ -351,6 +403,7 @@ function createStore() {
         return {
           id: row.id,
           createdAt: row.created_at,
+          authUserId: row.auth_user_id,
           displayName: row.display_name,
           ageBand: row.age_band,
           locale: row.locale,
@@ -469,9 +522,7 @@ function createStore() {
         const nextUser = { ...user };
         const allowedUserFields = ['displayName', 'ageBand', 'locale', 'timezone', 'pronouns'];
         for (const field of allowedUserFields) {
-          if (Object.prototype.hasOwnProperty.call(patch, field)) {
-            nextUser[field] = patch[field];
-          }
+          if (Object.prototype.hasOwnProperty.call(patch, field)) nextUser[field] = patch[field];
         }
 
         await pool.query(
@@ -511,7 +562,6 @@ function createStore() {
             updatedProfile.updatedAt,
           ]
         );
-
         return { user: nextUser, profile: updatedProfile };
       },
       async updateConsents(userId, patch) {
@@ -593,6 +643,7 @@ function createStore() {
       const user = {
         id: crypto.randomUUID(),
         createdAt: nowISO(),
+        authUserId: payload.authUserId || null,
         displayName: payload.displayName || null,
         ageBand: payload.ageBand || null,
         locale: payload.locale || 'en-US',
@@ -618,7 +669,20 @@ function createStore() {
       return user;
     },
     async findGuestUser() {
-      return localDb.users.find((u) => u.displayName === 'Guest') || null;
+      return localDb.users.find((u) => u.displayName === 'Guest' && !u.authUserId) || null;
+    },
+    async getUserByAuthUserId(authUserId) {
+      return localDb.users.find((u) => u.authUserId === authUserId) || null;
+    },
+    async getOrCreateUserForAuth(authUser, payload = {}) {
+      const existing = await this.getUserByAuthUserId(authUser.id);
+      if (existing) return existing;
+      const displayName = payload.displayName || authUser.user_metadata?.name || authUser.email?.split('@')?.[0] || 'Friend';
+      return this.createUser({
+        authUserId: authUser.id,
+        displayName,
+        locale: payload.locale || authUser.user_metadata?.locale || 'en-US',
+      });
     },
     async getUserById(userId) {
       return localDb.users.find((u) => u.id === userId) || null;
@@ -704,7 +768,10 @@ function createStore() {
       if (Object.prototype.hasOwnProperty.call(patch, 'stressTriggers') && Array.isArray(patch.stressTriggers)) {
         profile.stressTriggers = patch.stressTriggers;
       }
-      if (Object.prototype.hasOwnProperty.call(patch, 'preferredSupportStyle') && typeof patch.preferredSupportStyle === 'object') {
+      if (
+        Object.prototype.hasOwnProperty.call(patch, 'preferredSupportStyle') &&
+        typeof patch.preferredSupportStyle === 'object'
+      ) {
         profile.preferredSupportStyle = { ...profile.preferredSupportStyle, ...patch.preferredSupportStyle };
       }
       if (Object.prototype.hasOwnProperty.call(patch, 'advocacyNeeds') && typeof patch.advocacyNeeds === 'object') {
@@ -756,7 +823,6 @@ const store = createStore();
 async function extractMemoryFactsFromUserMessage(userId, userText) {
   const text = userText.trim();
   const lower = text.toLowerCase();
-
   const preferenceMatch = text.match(/(?:i like|i love|my favorite is)\s+(.+)/i);
   if (preferenceMatch?.[1]) {
     await store.upsertMemoryFact(userId, 'preference', 'general_preference', preferenceMatch[1].trim(), 'chat');
@@ -772,36 +838,36 @@ async function extractMemoryFactsFromUserMessage(userId, userText) {
 async function getRecommendationsForUser(userId) {
   const recentGames = await store.getRecentGameEvents(userId, 10);
   const recentFacts = await store.getMemoryFacts(userId, 5);
-
   const hasCalmImproved = recentGames.some((e) => e.eventType === 'calm_improved');
   const hasFrustrated = recentGames.some((e) => e.eventType === 'frustrated');
 
   const recommendations = [];
-  if (hasFrustrated) {
-    recommendations.push('Try a lower-intensity calming activity and use shorter game sessions (2-3 minutes).');
-  }
-  if (hasCalmImproved) {
-    recommendations.push('Repeat the same calming game tactic that worked recently before difficult moments.');
-  }
+  if (hasFrustrated) recommendations.push('Try a lower-intensity calming activity and use shorter game sessions (2-3 minutes).');
+  if (hasCalmImproved) recommendations.push('Repeat the same calming game tactic that worked recently before difficult moments.');
   if (recentFacts.some((fact) => fact.category === 'advocacy')) {
     recommendations.push('Before your next visit, write 2 top concerns and 3 questions to ask your doctor.');
   }
   if (recommendations.length === 0) {
     recommendations.push('Take one slow breathing break now and check in with how your body feels afterward.');
   }
-
   return recommendations;
 }
 
-async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId }) {
-  if (!isValidMessageArray(messages)) {
-    return res.status(400).json({ error: 'invalid messages format' });
+async function getAuthedAppUser(req, res) {
+  const authUser = req.authUser;
+  if (!authUser) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return null;
   }
+  const user = await store.getOrCreateUserForAuth(authUser, {});
+  return user;
+}
+
+async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId }) {
+  if (!isValidMessageArray(messages)) return res.status(400).json({ error: 'invalid messages format' });
 
   const user = await store.getUserById(userId);
-  if (!user) {
-    return res.status(404).json({ error: 'user not found' });
-  }
+  if (!user) return res.status(404).json({ error: 'user not found' });
 
   const resolvedMode = MODES.includes(mode) ? mode : 'companion';
   const session = await store.getOrCreateSession(user.id, sessionId, resolvedMode);
@@ -823,12 +889,7 @@ async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId })
   });
 
   if (latestUserContent) {
-    await store.insertMessage({
-      sessionId: session.id,
-      role: 'user',
-      text: latestUserContent,
-      safetyFlags: {},
-    });
+    await store.insertMessage({ sessionId: session.id, role: 'user', text: latestUserContent, safetyFlags: {} });
     await extractMemoryFactsFromUserMessage(user.id, latestUserContent);
   }
 
@@ -840,11 +901,7 @@ async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId })
     safetyFlags: hasCrisisSignal(reply) ? { crisisEscalation: true } : {},
   });
 
-  return res.json({
-    reply: safeReply,
-    sessionId: session.id,
-    mode: resolvedMode,
-  });
+  return res.json({ reply: safeReply, sessionId: session.id, mode: resolvedMode });
 }
 
 app.use((req, res, next) => {
@@ -855,7 +912,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (_req, res) => {
-  res.status(200).json({ status: 'ok', service: 'khiddo-api', storage: store.mode, version: 'phase1' });
+  res.status(200).json({ status: 'ok', service: 'khiddo-api', storage: store.mode, version: 'phase1-auth' });
 });
 
 app.get('/health', async (_req, res) => {
@@ -865,6 +922,7 @@ app.get('/health', async (_req, res) => {
     storage: store.mode,
     hasOpenAIKey: Boolean(OPENAI_API_KEY),
     hasDatabaseUrl: Boolean(DATABASE_URL),
+    hasSupabaseConfig: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY),
     timestamp: nowISO(),
     uptimeSeconds: Math.floor(process.uptime()),
     users: userCount,
@@ -873,81 +931,109 @@ app.get('/health', async (_req, res) => {
 
 app.use(['/chat', '/v1/chat'], rateLimit);
 
+async function requireSupabaseAuth(req, res, next) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: 'Supabase auth is not configured on the server.' });
+  }
+  try {
+    const authUser = await resolveSupabaseUserFromAuthHeader(req.headers.authorization || '');
+    if (!authUser?.id) return res.status(401).json({ error: 'Unauthorized' });
+    req.authUser = authUser;
+    return next();
+  } catch (err) {
+    console.error(`[${req.requestId}] auth error:`, err);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+}
+
+app.use('/v1', requireSupabaseAuth);
+
 app.post('/v1/users', async (req, res) => {
-  const user = await store.createUser(req.body || {});
+  const user = await store.getOrCreateUserForAuth(req.authUser, req.body || {});
   res.status(201).json({ user });
 });
 
 app.get('/v1/users/:userId/profile', async (req, res) => {
-  const user = await store.getUserById(req.params.userId);
-  if (!user) {
-    return res.status(404).json({ error: 'user not found' });
-  }
+  const authedUser = await getAuthedAppUser(req, res);
+  if (!authedUser) return;
+  if (req.params.userId !== authedUser.id) return res.status(403).json({ error: 'Forbidden' });
+
   return res.json({
-    user,
-    consent: await store.getConsentByUserId(user.id),
-    profile: await store.getProfileByUserId(user.id),
-    memoryFacts: await store.getMemoryFacts(user.id),
+    user: authedUser,
+    consent: await store.getConsentByUserId(authedUser.id),
+    profile: await store.getProfileByUserId(authedUser.id),
+    memoryFacts: await store.getMemoryFacts(authedUser.id),
   });
 });
 
 app.patch('/v1/users/:userId/profile', async (req, res) => {
-  const updated = await store.updateProfile(req.params.userId, req.body || {});
-  if (!updated) {
-    return res.status(404).json({ error: 'user or profile not found' });
-  }
+  const authedUser = await getAuthedAppUser(req, res);
+  if (!authedUser) return;
+  if (req.params.userId !== authedUser.id) return res.status(403).json({ error: 'Forbidden' });
+
+  const updated = await store.updateProfile(authedUser.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'user or profile not found' });
   return res.json(updated);
 });
 
 app.patch('/v1/users/:userId/consents', async (req, res) => {
-  const user = await store.getUserById(req.params.userId);
-  if (!user) return res.status(404).json({ error: 'user not found' });
+  const authedUser = await getAuthedAppUser(req, res);
+  if (!authedUser) return;
+  if (req.params.userId !== authedUser.id) return res.status(403).json({ error: 'Forbidden' });
 
-  const consent = await store.updateConsents(user.id, req.body || {});
+  const consent = await store.updateConsents(authedUser.id, req.body || {});
   if (!consent) return res.status(404).json({ error: 'consent not found' });
-
   return res.json({ consent });
 });
 
 app.post('/v1/game-events', async (req, res) => {
-  const { userId, gameType, eventType, intensity, durationMs, metadata } = req.body || {};
-  const user = await store.getUserById(userId);
-  if (!user) return res.status(404).json({ error: 'user not found' });
+  const authedUser = await getAuthedAppUser(req, res);
+  if (!authedUser) return;
+
+  const { gameType, eventType, intensity, durationMs, metadata } = req.body || {};
   if (!gameType || !eventType) return res.status(400).json({ error: 'gameType and eventType are required' });
 
-  const event = await store.insertGameEvent({ userId, gameType, eventType, intensity, durationMs, metadata });
+  const event = await store.insertGameEvent({
+    userId: authedUser.id,
+    gameType,
+    eventType,
+    intensity,
+    durationMs,
+    metadata,
+  });
 
   if (eventType === 'calm_improved') {
-    await store.upsertMemoryFact(userId, 'coping', `game_${gameType}_effective`, `${gameType} helped reduce stress`, 'game');
+    await store.upsertMemoryFact(authedUser.id, 'coping', `game_${gameType}_effective`, `${gameType} helped reduce stress`, 'game');
   }
   if (eventType === 'frustrated') {
-    await store.upsertMemoryFact(userId, 'coping', `game_${gameType}_frustrating`, `${gameType} may feel overstimulating`, 'game');
+    await store.upsertMemoryFact(authedUser.id, 'coping', `game_${gameType}_frustrating`, `${gameType} may feel overstimulating`, 'game');
   }
-
   return res.status(201).json({ event });
 });
 
 app.get('/v1/recommendations/:userId', async (req, res) => {
-  const user = await store.getUserById(req.params.userId);
-  if (!user) return res.status(404).json({ error: 'user not found' });
+  const authedUser = await getAuthedAppUser(req, res);
+  if (!authedUser) return;
+  if (req.params.userId !== authedUser.id) return res.status(403).json({ error: 'Forbidden' });
 
   return res.json({
-    userId: user.id,
-    recommendations: await getRecommendationsForUser(user.id),
+    userId: authedUser.id,
+    recommendations: await getRecommendationsForUser(authedUser.id),
   });
 });
 
 app.post('/v1/chat', async (req, res) => {
   try {
-    const { userId, mode = 'companion', sessionId, messages } = req.body || {};
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
+    const authedUser = await getAuthedAppUser(req, res);
+    if (!authedUser) return;
 
+    const { mode = 'companion', sessionId, messages } = req.body || {};
     const normalizedMessages = normalizeV1Messages(messages || []);
     return await handlePhase1Chat({
       req,
       res,
       messages: normalizedMessages,
-      userId,
+      userId: authedUser.id,
       mode,
       sessionId,
     });
@@ -961,22 +1047,20 @@ app.post('/v1/chat', async (req, res) => {
   }
 });
 
+// Legacy non-auth endpoint used by demo mode.
 app.post('/chat', async (req, res) => {
   try {
     const { messages } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'messages array required' });
     }
-
     const normalizedMessages = normalizeLegacyMessages(messages);
     if (!isValidMessageArray(normalizedMessages)) {
       return res.status(400).json({ error: 'invalid messages format' });
     }
 
     let legacyUser = await store.findGuestUser();
-    if (!legacyUser) {
-      legacyUser = await store.createUser({ displayName: 'Guest' });
-    }
+    if (!legacyUser) legacyUser = await store.createUser({ displayName: 'Guest' });
 
     return await handlePhase1Chat({
       req,
