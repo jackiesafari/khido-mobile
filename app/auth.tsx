@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
-import { sendEmailOtp, signInWithAppleIdentity, verifyEmailOtp } from '@/lib/auth';
+import { completeAuthFromUrl, sendEmailOtp, signInWithAppleIdentity, verifyEmailOtp } from '@/lib/auth';
 import { Routes } from '@/types/navigation';
 
 let AppleAuthentication: any = null;
@@ -22,6 +23,42 @@ export default function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const canUseAppleSignIn = Platform.OS === 'ios' && Boolean(AppleAuthentication?.AppleAuthenticationButton);
+  const incomingUrl = Linking.useURL();
+
+  useEffect(() => {
+    let mounted = true;
+    const handleInitialUrl = async () => {
+      const initialUrl = await Linking.getInitialURL();
+      if (!mounted || !initialUrl) return;
+      try {
+        const completed = await completeAuthFromUrl(initialUrl);
+        if (completed) {
+          router.replace(Routes.DASHBOARD);
+        }
+      } catch {
+        // Keep user on code flow if link handling fails.
+      }
+    };
+    handleInitialUrl();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!incomingUrl) return;
+    const handleIncomingUrl = async () => {
+      try {
+        const completed = await completeAuthFromUrl(incomingUrl);
+        if (completed) {
+          router.replace(Routes.DASHBOARD);
+        }
+      } catch {
+        setError('Sign-in link could not be completed. You can still use the 6-digit code.');
+      }
+    };
+    handleIncomingUrl();
+  }, [incomingUrl]);
 
   const handleSendCode = async () => {
     const normalizedEmail = email.trim().toLowerCase();
@@ -35,7 +72,7 @@ export default function AuthScreen() {
     try {
       await sendEmailOtp(normalizedEmail);
       setStep('verify');
-      setMessage('Check your email for a 6-digit code, then enter it below.');
+      setMessage('Check your email. You can either tap the sign-in link or enter the 6-digit code here.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send code.');
     } finally {
@@ -102,7 +139,7 @@ export default function AuthScreen() {
           </TouchableOpacity>
 
           <Text style={styles.title}>Sign In</Text>
-          <Text style={styles.subtitle}>Use your email for a one-time code.</Text>
+          <Text style={styles.subtitle}>Use your email for a one-time sign-in.</Text>
 
           <TextInput
             style={styles.input}
@@ -132,7 +169,16 @@ export default function AuthScreen() {
           {step === 'email' ? (
             <Button title="Send Code" onPress={handleSendCode} loading={loading} style={styles.button} />
           ) : (
-            <Button title="Verify & Continue" onPress={handleVerifyCode} loading={loading} style={styles.button} />
+            <>
+              <Button title="Verify & Continue" onPress={handleVerifyCode} loading={loading} style={styles.button} />
+              <TouchableOpacity
+                onPress={handleSendCode}
+                disabled={loading}
+                style={styles.linkButton}
+                activeOpacity={0.7}>
+                <Text style={styles.linkButtonText}>Resend code</Text>
+              </TouchableOpacity>
+            </>
           )}
 
           {canUseAppleSignIn && (
@@ -209,6 +255,15 @@ const styles = StyleSheet.create({
   },
   button: {
     marginTop: 8,
+  },
+  linkButton: {
+    alignSelf: 'center',
+    paddingVertical: 4,
+  },
+  linkButtonText: {
+    color: '#1D4ED8',
+    fontSize: 14,
+    fontWeight: '600',
   },
   appleButtonWrapper: {
     marginTop: 8,

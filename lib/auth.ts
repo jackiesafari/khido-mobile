@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import * as Linking from 'expo-linking';
 
 type SupabaseSession = {
   access_token: string;
@@ -14,6 +15,8 @@ export type AppleIdentityPayload = {
 
 const supabaseUrl = Constants.expoConfig?.extra?.supabaseUrl as string | null;
 const supabaseAnonKey = Constants.expoConfig?.extra?.supabaseAnonKey as string | null;
+const chatApiUrl = Constants.expoConfig?.extra?.chatApiUrl as string | null;
+const configuredAuthBridgeUrl = Constants.expoConfig?.extra?.authBridgeUrl as string | null;
 
 let session: SupabaseSession | null = null;
 
@@ -45,9 +48,18 @@ async function request(path: string, body: object) {
 }
 
 export async function sendEmailOtp(email: string) {
+  const appDeepLink = Linking.createURL('/auth');
+  const fallbackBridgeBase = chatApiUrl ? `${chatApiUrl.replace(/\/$/, '')}/auth/callback` : null;
+  const bridgeBase = configuredAuthBridgeUrl || fallbackBridgeBase;
+  const emailRedirectTo = bridgeBase
+    ? `${bridgeBase}?next=${encodeURIComponent(appDeepLink)}`
+    : appDeepLink;
+
   await request('/auth/v1/otp', {
     email,
     create_user: true,
+    redirect_to: emailRedirectTo,
+    email_redirect_to: emailRedirectTo,
   });
 }
 
@@ -59,6 +71,51 @@ export async function verifyEmailOtp(email: string, token: string) {
   });
   session = data as SupabaseSession;
   return session;
+}
+
+function getParamsFromUrl(url: string): URLSearchParams {
+  const queryIndex = url.indexOf('?');
+  const hashIndex = url.indexOf('#');
+  const queryPart = queryIndex >= 0
+    ? url.substring(queryIndex + 1, hashIndex >= 0 ? hashIndex : undefined)
+    : '';
+  const hashPart = hashIndex >= 0 ? url.substring(hashIndex + 1) : '';
+
+  const params = new URLSearchParams(queryPart);
+  const hashParams = new URLSearchParams(hashPart);
+  for (const [key, value] of hashParams.entries()) {
+    if (!params.has(key)) {
+      params.set(key, value);
+    }
+  }
+  return params;
+}
+
+export async function completeAuthFromUrl(url: string): Promise<boolean> {
+  assertSupabaseConfig();
+  const params = getParamsFromUrl(url);
+
+  const accessToken = params.get('access_token');
+  if (accessToken) {
+    session = {
+      access_token: accessToken,
+      refresh_token: params.get('refresh_token') || undefined,
+    };
+    return true;
+  }
+
+  const tokenHash = params.get('token_hash');
+  const type = params.get('type');
+  if (tokenHash && type) {
+    const data = await request('/auth/v1/verify', {
+      token_hash: tokenHash,
+      type,
+    });
+    session = data as SupabaseSession;
+    return true;
+  }
+
+  return false;
 }
 
 export async function signInWithAppleIdentity(payload: AppleIdentityPayload) {

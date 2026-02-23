@@ -915,6 +915,52 @@ app.get('/', (_req, res) => {
   res.status(200).json({ status: 'ok', service: 'khiddo-api', storage: store.mode, version: 'phase1-auth' });
 });
 
+app.get('/auth/callback', (req, res) => {
+  const requestedNext = typeof req.query.next === 'string' ? req.query.next : '';
+  const safeNext = requestedNext.startsWith('khiddo://') || requestedNext.startsWith('exp://')
+    ? requestedNext
+    : 'khiddo://auth';
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Khiddo Sign-In</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #1f2937; }
+    a { color: #2563eb; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <p>Finishing sign in...</p>
+  <p>If the app does not open automatically, <a id="open-link" href="#">tap here</a>.</p>
+  <script>
+    (function () {
+      const nextUrl = ${JSON.stringify(safeNext)};
+      const queryParams = new URLSearchParams(window.location.search);
+      queryParams.delete('next');
+
+      const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+      hashParams.forEach((value, key) => {
+        if (!queryParams.has(key)) queryParams.set(key, value);
+      });
+
+      const separator = nextUrl.includes('?') ? '&' : '?';
+      const finalUrl = queryParams.toString() ? nextUrl + separator + queryParams.toString() : nextUrl;
+
+      const link = document.getElementById('open-link');
+      if (link) link.setAttribute('href', finalUrl);
+
+      window.location.replace(finalUrl);
+    })();
+  </script>
+</body>
+</html>`;
+
+  res.status(200).type('html').send(html);
+});
+
 app.get('/health', async (_req, res) => {
   const userCount = await store.countUsers();
   res.status(200).json({
@@ -1095,4 +1141,3 @@ start().catch((err) => {
   console.error('Failed to start API:', err);
   process.exit(1);
 });
-
