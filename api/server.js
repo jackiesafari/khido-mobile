@@ -948,31 +948,35 @@ app.get('/auth/callback', (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Khido Sign-In</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #1f2937; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #1f2937; max-width: 400px; margin: 0 auto; }
     a { color: #2563eb; font-weight: 600; }
+    .open-btn { display: inline-block; margin: 16px 0; padding: 14px 24px; background: #1d4ed8; color: white !important; text-decoration: none; border-radius: 10px; font-weight: 600; text-align: center; -webkit-tap-highlight-color: transparent; }
+    .open-btn:hover { background: #1e40af; }
+    .fallback { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 14px; color: #6b7280; }
   </style>
 </head>
 <body>
-  <p>Finishing sign in...</p>
-  <p>If the app does not open automatically, <a id="open-link" href="#">tap here</a>.</p>
+  <p>You're signed in!</p>
+  <p><strong>Tap the button below</strong> to open Khido. (iOS Safari requires a tap to open the app.)</p>
+  <a id="open-link" class="open-btn" href="#">Open Khido</a>
+  <div class="fallback">
+    <p>If the app doesn't open, return to Khido and use the <strong>6-digit code</strong> from your email instead. (This works best when testing with Expo Go.)</p>
+  </div>
   <script>
     (function () {
-      const nextUrl = ${JSON.stringify(safeNext)};
-      const queryParams = new URLSearchParams(window.location.search);
-      queryParams.delete('next');
-
-      const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
-      hashParams.forEach((value, key) => {
-        if (!queryParams.has(key)) queryParams.set(key, value);
+      var nextUrl = ${JSON.stringify(safeNext)};
+      var hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+      var parts = [];
+      hashParams.forEach(function(value, key) {
+        parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
       });
+      var finalUrl = nextUrl;
+      if (parts.length) {
+        finalUrl += (nextUrl.indexOf('?') >= 0 ? '&' : '?') + parts.join('&');
+      }
 
-      const separator = nextUrl.includes('?') ? '&' : '?';
-      const finalUrl = queryParams.toString() ? nextUrl + separator + queryParams.toString() : nextUrl;
-
-      const link = document.getElementById('open-link');
+      var link = document.getElementById('open-link');
       if (link) link.setAttribute('href', finalUrl);
-
-      window.location.replace(finalUrl);
     })();
   </script>
 </body>
