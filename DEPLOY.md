@@ -1,4 +1,4 @@
-# Deploy Khiddo API to Railway
+# Deploy Khido API to Railway
 
 Follow these steps to deploy your API so the app works for real users (including App Store).
 
@@ -21,7 +21,7 @@ cd "/Users/jackiebrain/Desktop/khiddo 2026"
 git init
 git add .
 git commit -m "Initial commit"
-git remote add origin https://github.com/YOUR_USERNAME/khiddo.git
+git remote add origin https://github.com/YOUR_USERNAME/khido.git
 git branch -M main
 git push -u origin main
 ```
@@ -33,7 +33,7 @@ git push -u origin main
 1. Go to [railway.app](https://railway.app) and sign in (GitHub login works).
 2. Click **New Project**.
 3. Choose **Deploy from GitHub repo**.
-4. Select your `khiddo` repository (or connect GitHub if needed).
+4. Select your `khido` repository (or connect GitHub if needed).
 5. Railway will create a new service.
 
 ---
@@ -53,7 +53,7 @@ git push -u origin main
 
 1. Click **Deploy** (or push a new commit to trigger a deploy).
 2. Once deployed, go to **Settings** → **Networking** → **Generate Domain**.
-3. Copy the URL (e.g. `https://khiddo-api-production.up.railway.app`).
+3. Copy the URL (e.g. `https://khido-mobile-production.up.railway.app`).
 
 ---
 
@@ -63,9 +63,28 @@ Add this to your **.env** file:
 
 ```
 EXPO_PUBLIC_CHAT_API_URL=https://YOUR-RAILWAY-URL.up.railway.app
+EXPO_PUBLIC_AUTH_BRIDGE_URL=https://YOUR-RAILWAY-URL.up.railway.app/auth/callback
 ```
 
-Replace with your actual Railway URL (no trailing slash).
+Replace with your actual Railway URL (no trailing slash). Use the **exact** subdomain (e.g. `khido-mobile-production`) that Railway assigned.
+
+---
+
+## Step 5b: Configure Supabase for Magic Links
+
+For email magic links to redirect back into the app, configure Supabase:
+
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard) → your project → **Authentication** → **URL Configuration**.
+2. Under **Redirect URLs**, add:
+   ```
+   https://khido-mobile-production.up.railway.app/auth/callback
+   ```
+   (Replace with your actual Railway URL if different. Or use a wildcard: `https://*.up.railway.app/auth/callback`.)
+3. **Important:** Set **Site URL** to your auth callback, NOT the API root:
+   ```
+   https://khido-mobile-production.up.railway.app/auth/callback
+   ```
+   If Site URL is set to the API root (`https://...railway.app/`), users will land on a JSON page instead of being redirected back to the app. The auth callback page is what forwards them into Khido.
 
 ---
 

@@ -52,7 +52,7 @@ export default function IntroPage() {
             </View>
 
             {/* Name - Using Text component for better font control */}
-            <Text style={styles.name}>Khiddo</Text>
+            <Text style={styles.name}>Khido</Text>
 
             {/* Tagline - Using same font as name */}
             <Text style={styles.tagline}>Your new friend</Text>

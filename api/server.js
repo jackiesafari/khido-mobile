@@ -150,7 +150,7 @@ function parseJsonSafe(value, fallback) {
 }
 
 function buildSystemPrompt({ mode, profile, memoryFacts, recentAssistantQuestions }) {
-  const basePrompt = `You are Khiddo, a kind and supportive AI friend.
+  const basePrompt = `You are Khido, a kind and supportive AI friend.
 - Be warm, concise, and conversational (2-4 sentences).
 - Use simple language and a gentle, encouraging tone.
 - Acknowledge the user's most recent feeling or preference before asking anything new.
@@ -911,22 +911,42 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/', (_req, res) => {
-  res.status(200).json({ status: 'ok', service: 'khiddo-api', storage: store.mode, version: 'phase1-auth' });
+app.get('/', (req, res) => {
+  const accept = (req.headers.accept || '').toLowerCase();
+  const isBrowser = accept.includes('text/html');
+  if (isBrowser) {
+    res.status(200).type('html').send(`<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Khido Sign-In</title></head><body>
+<script>
+(function(){
+  var hash = window.location.hash || '';
+  if (hash.indexOf('access_token') !== -1) {
+    var next = 'khido://auth';
+    window.location.replace('/auth/callback?next=' + encodeURIComponent(next) + hash);
+    return;
+  }
+  document.body.innerHTML = '<p style="font-family:system-ui;padding:24px;color:#333;">' +
+    'If you were trying to sign in to Khido, the link may have opened incorrectly.</p>' +
+    '<p style="font-family:system-ui;padding:0 24px;color:#666;">Return to the Khido app and try again, or use the 6-digit code from your email.</p>';
+})();
+</script><p style="font-family:system-ui;padding:24px;color:#666;">Loading...</p></body></html>`);
+    return;
+  }
+  res.status(200).json({ status: 'ok', service: 'khido-api', storage: store.mode, version: 'phase1-auth' });
 });
 
 app.get('/auth/callback', (req, res) => {
   const requestedNext = typeof req.query.next === 'string' ? req.query.next : '';
-  const safeNext = requestedNext.startsWith('khiddo://') || requestedNext.startsWith('exp://')
+  const safeNext = requestedNext.startsWith('khido://') || requestedNext.startsWith('exp://')
     ? requestedNext
-    : 'khiddo://auth';
+    : 'khido://auth';
 
   const html = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Khiddo Sign-In</title>
+  <title>Khido Sign-In</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #1f2937; }
     a { color: #2563eb; font-weight: 600; }
@@ -1133,7 +1153,7 @@ async function start() {
   }
   const PORT = process.env.PORT || 3001;
   app.listen(PORT, () => {
-    console.log(`Khiddo API running on http://localhost:${PORT} (storage: ${store.mode})`);
+    console.log(`Khido API running on http://localhost:${PORT} (storage: ${store.mode})`);
   });
 }
 

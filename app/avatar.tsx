@@ -22,7 +22,7 @@ type Message = { role: 'user' | 'avatar'; text: string };
 
 const WELCOME_MESSAGE: Message = {
   role: 'avatar',
-  text: "Hi there! I'm Khiddo, your new friend. I'm here to listen, support you, and help whenever you need it. What's on your mind today?",
+  text: "Hi there! I'm Khido, your new friend. I'm here to listen, support you, and help whenever you need it. What's on your mind today?",
 };
 
 // Fallback when API is unavailable
@@ -158,7 +158,7 @@ export default function AvatarScreen() {
               <View style={[styles.messageBubble, styles.avatarBubble, styles.typingBubble]}>
                 <ActivityIndicator size="small" color="#2D2D2D" />
                 <Text style={[styles.messageText, styles.avatarMessageText, styles.typingText]}>
-                  Khiddo is thinking...
+                  Khido is thinking...
                 </Text>
               </View>
             )}
