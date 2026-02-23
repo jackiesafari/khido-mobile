@@ -54,7 +54,7 @@ export default function AuthScreen() {
           router.replace(Routes.DASHBOARD);
         }
       } catch {
-        setError('Sign-in link could not be completed. You can still use the 6-digit code.');
+        setError('Sign-in link could not be completed. You can still use the code from your email.');
       }
     };
     handleIncomingUrl();
@@ -72,7 +72,7 @@ export default function AuthScreen() {
     try {
       await sendEmailOtp(normalizedEmail);
       setStep('verify');
-      setMessage('Check your email. You can either tap the sign-in link or enter the 6-digit code here.');
+      setMessage('Check your email. You can either tap the sign-in link or enter the code here.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send code.');
     } finally {
@@ -154,12 +154,12 @@ export default function AuthScreen() {
           {step === 'verify' && (
             <TextInput
               style={styles.input}
-              placeholder="6-digit code"
+              placeholder="Enter code from email (6–8 digits)"
               placeholderTextColor="#8A8A8A"
               value={code}
               onChangeText={setCode}
               keyboardType="number-pad"
-              maxLength={6}
+              maxLength={8}
             />
           )}
 

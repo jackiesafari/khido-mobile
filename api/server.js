@@ -927,7 +927,7 @@ app.get('/', (req, res) => {
   }
   document.body.innerHTML = '<p style="font-family:system-ui;padding:24px;color:#333;">' +
     'If you were trying to sign in to Khido, the link may have opened incorrectly.</p>' +
-    '<p style="font-family:system-ui;padding:0 24px;color:#666;">Return to the Khido app and try again, or use the 6-digit code from your email.</p>';
+    '<p style="font-family:system-ui;padding:0 24px;color:#666;">Return to the Khido app and try again, or use the code from your email.</p>';
 })();
 </script><p style="font-family:system-ui;padding:24px;color:#666;">Loading...</p></body></html>`);
     return;
@@ -960,7 +960,7 @@ app.get('/auth/callback', (req, res) => {
   <p><strong>Tap the button below</strong> to open Khido. (iOS Safari requires a tap to open the app.)</p>
   <a id="open-link" class="open-btn" href="#">Open Khido</a>
   <div class="fallback">
-    <p>If the app doesn't open, return to Khido and use the <strong>6-digit code</strong> from your email instead. (This works best when testing with Expo Go.)</p>
+    <p>If the app doesn't open, return to Khido and use the <strong>code</strong> from your email instead. (This works best when testing with Expo Go.)</p>
   </div>
   <script>
     (function () {
