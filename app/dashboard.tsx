@@ -9,7 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 export default function DashboardPage() {
   const handleProfilePress = () => {
-    console.log('Navigate to Profile');
+    router.push(Routes.PROFILE);
   };
 
   const handleAvatarPress = () => {

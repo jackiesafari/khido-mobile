@@ -17,8 +17,10 @@ export default function RootLayout() {
         <Stack.Screen name="intropage" options={{ headerShown: false }} />
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="dashboard" options={{ headerShown: false }} />
+        <Stack.Screen name="profile" options={{ headerShown: false }} />
         <Stack.Screen name="avatar" options={{ headerShown: false }} />
         <Stack.Screen name="games" options={{ headerShown: false }} />
+        <Stack.Screen name="garden-reward" options={{ headerShown: false }} />
         <Stack.Screen name="sounds" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />

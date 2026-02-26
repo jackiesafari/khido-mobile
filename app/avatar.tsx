@@ -17,13 +17,30 @@ import { ThemedView } from '@/components/themed-view';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Routes } from '@/types/navigation';
 import { resetPhase1Session, sendChatMessage, type ChatMessage } from '@/lib/chat-api';
+import { getProfileSnapshot } from '@/lib/profile-store';
 
 type Message = { role: 'user' | 'avatar'; text: string };
 
-const WELCOME_MESSAGE: Message = {
-  role: 'avatar',
-  text: "Hi there! I'm Khido, your new friend. I'm here to listen, support you, and help whenever you need it. What's on your mind today?",
-};
+function buildWelcomeMessage(): Message {
+  const profile = getProfileSnapshot();
+  return {
+    role: 'avatar',
+    text: `Hi ${profile.displayName || 'friend'}! I am Khido, your ${
+      profile.avatarSpirit
+    } guide. I can support you through ${profile.copingStyle} and keep things focused on your goal: ${
+      profile.supportGoal
+    } What feels most important right now?`,
+  };
+}
+
+function getQuickPrompts() {
+  const profile = getProfileSnapshot();
+  return [
+    `Guide me with ${profile.copingStyle}`,
+    `Remind me: ${profile.comfortPhrase}`,
+    `Help with this goal: ${profile.supportGoal}`,
+  ];
+}
 
 // Fallback when API is unavailable
 function getFallbackResponse(): string {
@@ -41,9 +58,10 @@ function getFallbackResponse(): string {
  */
 export default function AvatarScreen() {
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
+  const [messages, setMessages] = useState<Message[]>([buildWelcomeMessage()]);
   const [isLoading, setIsLoading] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [quickPrompts] = useState<string[]>(getQuickPrompts());
   const videoRef = useRef<Video>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -166,24 +184,15 @@ export default function AvatarScreen() {
 
             {/* Quick Prompts */}
             <View style={styles.quickPrompts}>
-              <TouchableOpacity
-                style={styles.quickPrompt}
-                onPress={() => setMessage("I'd like to talk")}
-                activeOpacity={0.7}>
-                <Text style={styles.quickPromptText}>I&apos;d like to talk</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickPrompt}
-                onPress={() => setMessage("I need help advocating")}
-                activeOpacity={0.7}>
-                <Text style={styles.quickPromptText}>I need help advocating</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.quickPrompt}
-                onPress={() => setMessage("Play a game with me")}
-                activeOpacity={0.7}>
-                <Text style={styles.quickPromptText}>Play a game with me</Text>
-              </TouchableOpacity>
+              {quickPrompts.map((prompt) => (
+                <TouchableOpacity
+                  key={prompt}
+                  style={styles.quickPrompt}
+                  onPress={() => setMessage(prompt)}
+                  activeOpacity={0.7}>
+                  <Text style={styles.quickPromptText}>{prompt}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </ScrollView>
 

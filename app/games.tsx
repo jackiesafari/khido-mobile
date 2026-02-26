@@ -240,28 +240,33 @@ function buildPath(cols: number, rows: number, rng: RNG, direction: PathDirectio
   let start: Point;
   let isAtGoal: (p: Point) => boolean;
   let biasDir: (candidates: Point[], current: Point) => Point[];
+  let goal: Point;
 
   switch (direction) {
     case 'right_to_left':
       start = { x: cols - 1, y: randomInt(rng, 0, rows - 1) };
+      goal = { x: 0, y: start.y };
       isAtGoal = (p) => p.x <= 0;
       biasDir = (candidates, current) =>
         candidates.flatMap((c) => (c.x < current.x ? [c, c, c] : [c]));
       break;
     case 'top_to_bottom':
       start = { x: randomInt(rng, 0, cols - 1), y: 0 };
+      goal = { x: start.x, y: rows - 1 };
       isAtGoal = (p) => p.y >= rows - 1;
       biasDir = (candidates, current) =>
         candidates.flatMap((c) => (c.y > current.y ? [c, c, c] : [c]));
       break;
     case 'bottom_to_top':
       start = { x: randomInt(rng, 0, cols - 1), y: rows - 1 };
+      goal = { x: start.x, y: 0 };
       isAtGoal = (p) => p.y <= 0;
       biasDir = (candidates, current) =>
         candidates.flatMap((c) => (c.y < current.y ? [c, c, c] : [c]));
       break;
     default:
       start = { x: 0, y: randomInt(rng, 0, rows - 1) };
+      goal = { x: cols - 1, y: start.y };
       isAtGoal = (p) => p.x >= cols - 1;
       biasDir = (candidates, current) =>
         candidates.flatMap((c) => (c.x > current.x ? [c, c, c] : [c]));
@@ -269,8 +274,11 @@ function buildPath(cols: number, rows: number, rng: RNG, direction: PathDirectio
 
   const path: Point[] = [start];
   const visited = new Set([pointKey(start)]);
+  const maxSteps = cols * rows * 8;
+  let steps = 0;
 
-  while (!isAtGoal(path[path.length - 1])) {
+  while (!isAtGoal(path[path.length - 1]) && steps < maxSteps) {
+    steps += 1;
     const current = path[path.length - 1];
     const candidates: Point[] = [];
     if (current.x > 0) candidates.push({ x: current.x - 1, y: current.y });
@@ -280,13 +288,31 @@ function buildPath(cols: number, rows: number, rng: RNG, direction: PathDirectio
 
     const weighted = biasDir(candidates, current);
     const unvisited = weighted.filter((c) => !visited.has(pointKey(c)));
+    const nearestGoal = [...weighted].sort((a, b) => {
+      const da = Math.abs(goal.x - a.x) + Math.abs(goal.y - a.y);
+      const db = Math.abs(goal.x - b.x) + Math.abs(goal.y - b.y);
+      return da - db;
+    })[0];
     const next =
       unvisited.length > 0
         ? randomFrom(rng, unvisited)
-        : (weighted.find((c) => !visited.has(pointKey(c))) ?? weighted[0]);
+        : (nearestGoal ?? weighted[0]);
+
+    if (!next) break;
 
     path.push(next);
     visited.add(pointKey(next));
+  }
+
+  while (!isAtGoal(path[path.length - 1])) {
+    const current = path[path.length - 1];
+    let next = current;
+    if (direction === 'left_to_right' && current.x < cols - 1) next = { x: current.x + 1, y: current.y };
+    if (direction === 'right_to_left' && current.x > 0) next = { x: current.x - 1, y: current.y };
+    if (direction === 'top_to_bottom' && current.y < rows - 1) next = { x: current.x, y: current.y + 1 };
+    if (direction === 'bottom_to_top' && current.y > 0) next = { x: current.x, y: current.y - 1 };
+    if (next.x === current.x && next.y === current.y) break;
+    path.push(next);
   }
 
   return path;
@@ -675,6 +701,7 @@ export default function GamesScreen() {
   const lastInteractionAtRef = useRef(Date.now());
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completedLevelsRef = useRef<Set<number>>(new Set());
+  const rewardScreenShownRef = useRef(false);
 
   const flowerTileKeySet = useMemo(() => new Set(activeLevel.flowerTileKeys), [activeLevel.flowerTileKeys]);
   const obstacleTileKeySet = useMemo(() => new Set(activeLevel.obstacleTileKeys), [activeLevel.obstacleTileKeys]);
@@ -947,6 +974,18 @@ export default function GamesScreen() {
     });
   }, [activeLevel.expectedMoves, activeLevel.id, logAnalytics, moves, selectedGame, showComplete]);
 
+  useEffect(() => {
+    const isFinalLevel = activeLevel.id === PUZZLE_LEVELS.length;
+    if (!isFinalLevel || !showComplete) {
+      rewardScreenShownRef.current = false;
+      return;
+    }
+    if (rewardScreenShownRef.current) return;
+
+    rewardScreenShownRef.current = true;
+    router.push(Routes.GARDEN_REWARD);
+  }, [activeLevel.id, showComplete]);
+
   const tileSize = tileSizeForLevel(activeLevel);
   const useIsoWorld = activeLevel.id >= 2;
 
@@ -1078,7 +1117,7 @@ export default function GamesScreen() {
                 </Text>
                 {activeLevel.perspectiveLinks.length > 0 && (
                   <Text style={styles.goalTextBridge}>
-                    Stone bridges connect distant towers. Rotate the tile marked "Switch" (gold label) to activate the crossing.
+                    Stone bridges connect distant towers. Rotate the tile marked Switch (gold label) to activate the crossing.
                   </Text>
                 )}
                 <View style={styles.goalDiagram}>
@@ -1224,7 +1263,7 @@ export default function GamesScreen() {
               {activeLevel.perspectiveLinks.length > 0 && (
                 <View style={styles.linkLegend}>
                   <MaterialIcons name="auto-awesome" size={14} color="#2E7CA3" />
-                  <Text style={styles.linkLegendText}>The stone bridge connects two towers. Rotate the tile marked "Switch" to activate it.</Text>
+                  <Text style={styles.linkLegendText}>The stone bridge connects two towers. Rotate the tile marked Switch to activate it.</Text>
                 </View>
               )}
 
@@ -1249,7 +1288,7 @@ export default function GamesScreen() {
                 ) : (
                   <View style={styles.allCompleteWrap}>
                     <MaterialIcons name="celebration" size={24} color="#1A6B4A" />
-                    <Text style={styles.allCompleteText}>All levels complete!</Text>
+                    <Text style={styles.allCompleteText}>All 14 levels complete!</Text>
                   </View>
                 )}
               </View>

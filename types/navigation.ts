@@ -15,8 +15,10 @@ export type RootStackParamList = {
   intropage: undefined;
   auth: undefined;
   dashboard: undefined;
+  profile: undefined;
   avatar: undefined;
   games: undefined;
+  'garden-reward': undefined;
   sounds: undefined;
   // Auth routes (to be implemented)
   // 'auth/signup': undefined;
@@ -32,8 +34,10 @@ export const Routes = {
   INTRO: '/intropage',
   AUTH: '/auth',
   DASHBOARD: '/dashboard',
+  PROFILE: '/profile',
   AVATAR: '/avatar',
   GAMES: '/games',
+  GARDEN_REWARD: '/garden-reward',
   SOUNDS: '/sounds',
   // Auth routes (to be implemented)
   // SIGNUP: '/auth/signup',
