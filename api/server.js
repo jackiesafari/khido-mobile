@@ -149,16 +149,18 @@ function parseJsonSafe(value, fallback) {
   }
 }
 
-function buildSystemPrompt({ mode, profile, memoryFacts, recentAssistantQuestions }) {
-  const basePrompt = `You are Khido, a kind and supportive AI friend.
-- Be warm, concise, and conversational (2-4 sentences).
-- Use simple language and a gentle, encouraging tone.
-- Acknowledge the user's most recent feeling or preference before asking anything new.
-- Ask at most one follow-up question and only if it helps.
-- Never ask the exact same question again if it was already asked recently.
-- Never encourage harmful behavior.
-- Do not provide diagnosis or medication instructions.
-- For possible emergencies, tell users to seek immediate local professional help.`;
+function buildSystemPrompt({ mode, profile, profileSnapshot, memoryFacts, recentAssistantQuestions, gameEventsSummary }) {
+  const basePrompt = `You are Khido, a warm snow leopard companion. You feel like talking to a real friend—authentic, genuine, never robotic.
+
+Core principles:
+- Empathy first: Acknowledge and validate what they shared before offering anything else. Show you heard them.
+- Listen actively: Reflect back their feelings. Never rush to fix or advise.
+- Never shame: No judgment, no "you should have," no guilt. Meet them where they are.
+- Provide tools, not lectures: When someone is struggling, offer practical support—hotlines (e.g., 988 for crisis in the US), grounding techniques, and encouragement to reach out to a trusted friend, family member, or professional. Human connection matters; you support, you don't replace it.
+- Be warm, concise, conversational (2-4 sentences). Simple language, gentle tone.
+- Ask at most one follow-up question and only if it helps. Never repeat the same question.
+- Never encourage harmful behavior. Do not diagnose or prescribe.
+- For possible emergencies, tell users to seek immediate local professional help and provide relevant hotline numbers.`;
 
   const modeInstruction =
     mode === 'advocacy'
@@ -171,12 +173,26 @@ function buildSystemPrompt({ mode, profile, memoryFacts, recentAssistantQuestion
         ? 'Regulation mode: prioritize calming support. Keep tone slower and grounding-focused.'
         : 'Companion mode: prioritize connection, reassurance, and low-pressure conversation.';
 
-  const profileInstruction = profile
-    ? `User profile:
-- stress triggers: ${JSON.stringify(profile.stressTriggers)}
-- preferred support style: ${JSON.stringify(profile.preferredSupportStyle)}
-- advocacy needs: ${JSON.stringify(profile.advocacyNeeds)}`
+  const clientProfile = profileSnapshot || {};
+  const profileParts = [];
+  if (profile) {
+    profileParts.push(`- stress triggers: ${JSON.stringify(profile.stressTriggers)}`);
+    profileParts.push(`- preferred support style: ${JSON.stringify(profile.preferredSupportStyle)}`);
+    profileParts.push(`- advocacy needs: ${JSON.stringify(profile.advocacyNeeds)}`);
+  }
+  if (clientProfile.displayName) profileParts.push(`- display name: ${clientProfile.displayName}`);
+  if (clientProfile.comfortPhrase) profileParts.push(`- comfort phrase: ${clientProfile.comfortPhrase}`);
+  if (clientProfile.supportGoal) profileParts.push(`- support goal: ${clientProfile.supportGoal}`);
+  if (clientProfile.copingStyle) profileParts.push(`- coping style: ${clientProfile.copingStyle}`);
+  if (clientProfile.sensoryReset) profileParts.push(`- sensory reset: ${clientProfile.sensoryReset}`);
+  if (clientProfile.triggerNotes) profileParts.push(`- triggers to avoid: ${clientProfile.triggerNotes}`);
+  const profileInstruction = profileParts.length > 0
+    ? `User profile:\n${profileParts.join('\n')}`
     : 'User profile: not set.';
+
+  const gameInstruction = gameEventsSummary
+    ? `Recent activities:\n${gameEventsSummary}`
+    : '';
 
   const memoryInstruction =
     memoryFacts.length > 0
@@ -190,18 +206,21 @@ function buildSystemPrompt({ mode, profile, memoryFacts, recentAssistantQuestion
       ? `Recent assistant questions to avoid repeating:\n${recentAssistantQuestions.map((q) => `- ${q}`).join('\n')}`
       : 'No recent questions to avoid.';
 
-  return [basePrompt, modeInstruction, profileInstruction, memoryInstruction, repetitionInstruction].join('\n\n');
+  const parts = [basePrompt, modeInstruction, profileInstruction];
+  if (gameInstruction) parts.push(gameInstruction);
+  parts.push(memoryInstruction, repetitionInstruction);
+  return parts.join('\n\n');
 }
 
 function getLatestUserContent(messages) {
   return [...messages].reverse().find((m) => m.role === 'user')?.content || '';
 }
 
-async function generateAssistantReply({ mode, messages, profile, memoryFacts, recentAssistantQuestions }) {
+async function generateAssistantReply({ mode, messages, profile, profileSnapshot, memoryFacts, recentAssistantQuestions, gameEventsSummary }) {
   if (!openai) {
     throw Object.assign(new Error('Server is not fully configured. Missing OPENAI_API_KEY.'), { statusCode: 503 });
   }
-  const systemPrompt = buildSystemPrompt({ mode, profile, memoryFacts, recentAssistantQuestions });
+  const systemPrompt = buildSystemPrompt({ mode, profile, profileSnapshot, memoryFacts, recentAssistantQuestions, gameEventsSummary });
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [{ role: 'system', content: systemPrompt }, ...messages],
@@ -863,7 +882,17 @@ async function getAuthedAppUser(req, res) {
   return user;
 }
 
-async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId }) {
+function buildGameEventsSummary(events) {
+  if (!events || events.length === 0) return null;
+  const lines = events.slice(0, 5).map((e) => {
+    const meta = e.metadata && typeof e.metadata === 'object' ? e.metadata : {};
+    const levelId = meta.levelId != null ? ` level ${meta.levelId}` : '';
+    return `- ${e.gameType}: ${e.eventType}${e.durationMs ? ` (${Math.round(e.durationMs / 1000)}s)` : ''}${levelId}`;
+  });
+  return lines.join('\n');
+}
+
+async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId, profileSnapshot }) {
   if (!isValidMessageArray(messages)) return res.status(400).json({ error: 'invalid messages format' });
 
   const user = await store.getUserById(userId);
@@ -874,6 +903,8 @@ async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId })
   const profile = await store.getProfileByUserId(user.id);
   const memoryFacts = await store.getMemoryFacts(user.id);
   const recentAssistantQuestions = await store.getRecentAssistantQuestions(session.id);
+  const recentGameEvents = await store.getRecentGameEvents(user.id, 10);
+  const gameEventsSummary = buildGameEventsSummary(recentGameEvents);
   const latestUserContent = getLatestUserContent(messages);
 
   if (latestUserContent && hasCrisisSignal(latestUserContent)) {
@@ -884,8 +915,10 @@ async function handlePhase1Chat({ req, res, messages, userId, mode, sessionId })
     mode: resolvedMode,
     messages,
     profile,
+    profileSnapshot: profileSnapshot || null,
     memoryFacts,
     recentAssistantQuestions,
+    gameEventsSummary,
   });
 
   if (latestUserContent) {
@@ -1006,7 +1039,7 @@ app.get('/health', async (_req, res) => {
   });
 });
 
-app.use(['/chat', '/v1/chat'], rateLimit);
+app.use(['/chat', '/v1/chat', '/v1/speech', '/speech'], rateLimit);
 
 async function requireSupabaseAuth(req, res, next) {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
@@ -1063,6 +1096,65 @@ app.patch('/v1/users/:userId/consents', async (req, res) => {
   return res.json({ consent });
 });
 
+const TTS_VOICES = ['sage', 'shimmer', 'nova'];
+const TTS_DEFAULT_VOICE = 'sage';
+
+async function generateTTSAudio(text, voice = TTS_DEFAULT_VOICE) {
+  if (!openai) throw new Error('TTS not configured. Missing OPENAI_API_KEY.');
+  const safeVoice = TTS_VOICES.includes(voice) ? voice : TTS_DEFAULT_VOICE;
+  const input = String(text).slice(0, 4096).trim();
+  if (!input) throw new Error('Text is empty');
+
+  try {
+    const response = await openai.audio.speech.create({
+      model: 'gpt-4o-mini-tts',
+      voice: safeVoice,
+      input,
+      instructions: 'Speak in a calm, soothing, and gentle tone.',
+    });
+    return Buffer.from(await response.arrayBuffer());
+  } catch (err) {
+    console.error('[TTS] gpt-4o-mini-tts failed, trying tts-1:', err?.message);
+    const response = await openai.audio.speech.create({
+      model: 'tts-1',
+      voice: safeVoice,
+      input,
+    });
+    return Buffer.from(await response.arrayBuffer());
+  }
+}
+
+app.post('/v1/speech', async (req, res) => {
+  const authedUser = await getAuthedAppUser(req, res);
+  if (!authedUser) return;
+
+  const { text, voice } = req.body || {};
+  if (!text || typeof text !== 'string') return res.status(400).json({ error: 'text is required' });
+
+  try {
+    const audio = await generateTTSAudio(text.trim(), voice);
+    const base64 = audio.toString('base64');
+    res.json({ audio: base64 });
+  } catch (err) {
+    console.error(`[${req.requestId}] /v1/speech error:`, err);
+    res.status(500).json({ error: err.message || 'TTS failed' });
+  }
+});
+
+app.post('/speech', async (req, res) => {
+  const { text, voice } = req.body || {};
+  if (!text || typeof text !== 'string') return res.status(400).json({ error: 'text is required' });
+
+  try {
+    const audio = await generateTTSAudio(text.trim(), voice);
+    const base64 = audio.toString('base64');
+    res.json({ audio: base64 });
+  } catch (err) {
+    console.error(`[${req.requestId}] /speech error:`, err);
+    res.status(500).json({ error: err.message || 'TTS failed' });
+  }
+});
+
 app.post('/v1/game-events', async (req, res) => {
   const authedUser = await getAuthedAppUser(req, res);
   if (!authedUser) return;
@@ -1104,7 +1196,7 @@ app.post('/v1/chat', async (req, res) => {
     const authedUser = await getAuthedAppUser(req, res);
     if (!authedUser) return;
 
-    const { mode = 'companion', sessionId, messages } = req.body || {};
+    const { mode = 'companion', sessionId, messages, profileSnapshot } = req.body || {};
     const normalizedMessages = normalizeV1Messages(messages || []);
     return await handlePhase1Chat({
       req,
@@ -1113,6 +1205,7 @@ app.post('/v1/chat', async (req, res) => {
       userId: authedUser.id,
       mode,
       sessionId,
+      profileSnapshot,
     });
   } catch (err) {
     const statusCode = err?.statusCode || 500;
@@ -1127,7 +1220,7 @@ app.post('/v1/chat', async (req, res) => {
 // Legacy non-auth endpoint used by demo mode.
 app.post('/chat', async (req, res) => {
   try {
-    const { messages } = req.body || {};
+    const { messages, profileSnapshot } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'messages array required' });
     }
@@ -1146,6 +1239,7 @@ app.post('/chat', async (req, res) => {
       userId: legacyUser.id,
       mode: 'companion',
       sessionId: null,
+      profileSnapshot,
     });
   } catch (err) {
     const statusCode = err?.statusCode || 500;
