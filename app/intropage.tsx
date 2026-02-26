@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, SafeAreaView, Text, Platform } from 'react-native';
+import { Platform, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
@@ -7,23 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Routes } from '@/types/navigation';
 import { clearSession } from '@/lib/auth';
 
-/**
- * IntroPage - The first screen users see when opening the app
- * 
- * This page serves as the entry point and can be used to:
- * - Show app branding and character
- * - Provide navigation to demo, login, or signup flows
- * - Handle first-time user experience
- * 
- * Future enhancements:
- * - Add authentication state checking
- * - Add onboarding flow for new users
- * - Add skip/continue logic based on user state
- */
 export default function IntroPage() {
   const handleDemo = () => {
     clearSession();
-    // Navigate to dashboard
     router.push(Routes.DASHBOARD);
   };
 
@@ -38,11 +24,8 @@ export default function IntroPage() {
   return (
     <SafeAreaView style={styles.container}>
       <ThemedView style={styles.background} lightColor="#7BAEF9" darkColor="#7BAEF9">
-        
-        {/* Main content panel */}
         <View style={styles.panelContainer}>
           <ThemedView style={styles.panel} lightColor="#7BAEF9" darkColor="#7BAEF9">
-            {/* Avatar */}
             <View style={styles.avatarContainer}>
               <Image
                 source={require('@/assets/images/default-face.png')}
@@ -51,32 +34,13 @@ export default function IntroPage() {
               />
             </View>
 
-            {/* Name - Using Text component for better font control */}
             <Text style={styles.name}>Khido</Text>
-
-            {/* Tagline - Using same font as name */}
             <Text style={styles.tagline}>Your new friend</Text>
 
-            {/* Action buttons */}
             <View style={styles.buttonContainer}>
-              <Button
-                title="Demo"
-                onPress={handleDemo}
-                variant="primary"
-                style={styles.button}
-              />
-              <Button
-                title="Log in"
-                onPress={handleLogin}
-                variant="primary"
-                style={styles.button}
-              />
-              <Button
-                title="Sign up"
-                onPress={handleSignUp}
-                variant="primary"
-                style={styles.button}
-              />
+              <Button title="Demo" onPress={handleDemo} variant="primary" style={styles.button} />
+              <Button title="Log in" onPress={handleLogin} variant="primary" style={styles.button} />
+              <Button title="Sign up" onPress={handleSignUp} variant="primary" style={styles.button} />
             </View>
           </ThemedView>
         </View>
@@ -92,16 +56,6 @@ const styles = StyleSheet.create({
   background: {
     flex: 1,
     position: 'relative',
-  },
-  headerLabel: {
-    position: 'absolute',
-    top: 60,
-    left: 20,
-    zIndex: 10,
-  },
-  headerLabelText: {
-    fontSize: 16,
-    fontWeight: '500',
   },
   panelContainer: {
     flex: 1,
@@ -145,9 +99,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 12,
     lineHeight: 56,
-    // TODO: Load Baloo Bhai font using expo-font
-    // For now using system font with similar weight
-    // Once font is loaded, use: fontFamily: 'BalooBhai2-Regular'
     ...Platform.select({
       ios: {
         fontFamily: 'system',
@@ -168,7 +119,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     textAlign: 'center',
     marginBottom: 48,
-    // Using same font as name (Baloo Bhai)
     ...Platform.select({
       ios: {
         fontFamily: 'system',

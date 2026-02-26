@@ -920,9 +920,10 @@ app.get('/', (req, res) => {
 <script>
 (function(){
   var hash = window.location.hash || '';
-  if (hash.indexOf('access_token') !== -1) {
+  var query = window.location.search || '';
+  if (hash || query.indexOf('token_hash=') !== -1 || query.indexOf('access_token=') !== -1) {
     var next = 'khido://auth';
-    window.location.replace('/auth/callback?next=' + encodeURIComponent(next) + hash);
+    window.location.replace('/auth/callback?next=' + encodeURIComponent(next) + query + hash);
     return;
   }
   document.body.innerHTML = '<p style="font-family:system-ui;padding:24px;color:#333;">' +
@@ -965,8 +966,14 @@ app.get('/auth/callback', (req, res) => {
   <script>
     (function () {
       var nextUrl = ${JSON.stringify(safeNext)};
+      var searchParams = new URLSearchParams((window.location.search || '').replace(/^\\?/, ''));
       var hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
       var parts = [];
+      searchParams.forEach(function(value, key) {
+        if (key !== 'next') {
+          parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
+        }
+      });
       hashParams.forEach(function(value, key) {
         parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
       });

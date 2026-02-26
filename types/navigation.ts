@@ -16,6 +16,8 @@ export type RootStackParamList = {
   auth: undefined;
   dashboard: undefined;
   avatar: undefined;
+  games: undefined;
+  sounds: undefined;
   // Auth routes (to be implemented)
   // 'auth/signup': undefined;
   // 'auth/forgot-password': undefined;
@@ -31,7 +33,8 @@ export const Routes = {
   AUTH: '/auth',
   DASHBOARD: '/dashboard',
   AVATAR: '/avatar',
+  GAMES: '/games',
+  SOUNDS: '/sounds',
   // Auth routes (to be implemented)
   // SIGNUP: '/auth/signup',
 } as const;
-

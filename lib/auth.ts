@@ -95,6 +95,11 @@ export async function completeAuthFromUrl(url: string): Promise<boolean> {
   assertSupabaseConfig();
   const params = getParamsFromUrl(url);
 
+  const errorDescription = params.get('error_description') || params.get('error');
+  if (errorDescription) {
+    throw new Error(errorDescription);
+  }
+
   const accessToken = params.get('access_token');
   if (accessToken) {
     session = {
@@ -104,7 +109,7 @@ export async function completeAuthFromUrl(url: string): Promise<boolean> {
     return true;
   }
 
-  const tokenHash = params.get('token_hash');
+  const tokenHash = params.get('token_hash') || params.get('token');
   const type = params.get('type');
   if (tokenHash && type) {
     const data = await request('/auth/v1/verify', {
