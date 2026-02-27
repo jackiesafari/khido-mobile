@@ -6,6 +6,7 @@ module.exports = {
   ...appJson,
   expo: {
     ...appJson.expo,
+    plugins: [...(appJson.expo.plugins || []), 'expo-audio', 'expo-video'],
     extra: {
       rewardVideoPaths: process.env.EXPO_PUBLIC_REWARD_VIDEO_PATHS
         ? process.env.EXPO_PUBLIC_REWARD_VIDEO_PATHS.split(',').map((v) => v.trim()).filter(Boolean)

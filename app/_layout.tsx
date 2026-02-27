@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -5,9 +6,14 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { ensureAudioDirectory } from '@/lib/audio-manager';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+
+  useEffect(() => {
+    ensureAudioDirectory().catch(() => {});
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -22,6 +28,7 @@ export default function RootLayout() {
         <Stack.Screen name="games" options={{ headerShown: false }} />
         <Stack.Screen name="garden-reward" options={{ headerShown: false }} />
         <Stack.Screen name="sounds" options={{ headerShown: false }} />
+        <Stack.Screen name="resources" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

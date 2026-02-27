@@ -20,6 +20,7 @@ export type RootStackParamList = {
   games: undefined;
   'garden-reward': undefined;
   sounds: undefined;
+  resources: undefined;
   // Auth routes (to be implemented)
   // 'auth/signup': undefined;
   // 'auth/forgot-password': undefined;
@@ -39,6 +40,7 @@ export const Routes = {
   GAMES: '/games',
   GARDEN_REWARD: '/garden-reward',
   SOUNDS: '/sounds',
+  RESOURCES: '/resources',
   // Auth routes (to be implemented)
   // SIGNUP: '/auth/signup',
 } as const;

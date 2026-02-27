@@ -23,7 +23,7 @@ export type UserProfile = {
 const defaultProfile: UserProfile = {
   displayName: 'Friend',
   calmAlias: 'Steady Explorer',
-  avatarSpirit: 'bear',
+  avatarSpirit: 'snowleopard',
   favoriteAnimal: 'Snow leopard',
   comfortPhrase: 'I can take this one breath at a time.',
   supportGoal: 'Help me de-stress quickly after a hard moment.',

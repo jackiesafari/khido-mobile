@@ -34,12 +34,12 @@ type AvatarCard = {
 
 const AVATAR_CHOICES: AvatarCard[] = [
   {
-    id: 'bear',
-    title: 'Bear',
-    subtitle: 'Grounded and protective',
-    accent: '#F59E0B',
-    gradient: ['#6B3F1D', '#B66A3C'],
-    image: require('@/assets/images/bearillustration.png'),
+    id: 'snowleopard',
+    title: 'Snow Leopard',
+    subtitle: 'Perceptive and resilient',
+    accent: '#38BDF8',
+    gradient: ['#5D7992', '#A6C7D9'],
+    image: require('@/assets/images/snowleopardcasualillustration.png'),
     imageScale: 0.98,
     imageOffsetY: -8,
   },
@@ -54,12 +54,12 @@ const AVATAR_CHOICES: AvatarCard[] = [
     imageOffsetY: -8,
   },
   {
-    id: 'snowleopard',
-    title: 'Snow Leopard',
-    subtitle: 'Quiet and resilient',
-    accent: '#38BDF8',
-    gradient: ['#5D7992', '#A6C7D9'],
-    image: require('@/assets/images/snowleopardcasualillustration.png'),
+    id: 'bear',
+    title: 'Bear',
+    subtitle: 'Grounded and protective',
+    accent: '#F59E0B',
+    gradient: ['#6B3F1D', '#B66A3C'],
+    image: require('@/assets/images/bearillustration.png'),
     imageScale: 0.98,
     imageOffsetY: -8,
   },
@@ -186,7 +186,7 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          <Text style={styles.sectionTitle}>Choose your avatar interpretation</Text>
+          <Text style={styles.sectionTitle}>Choose your inner character</Text>
           <View style={styles.avatarGrid}>
             {AVATAR_CHOICES.map((choice) => {
               const selected = choice.id === draft.avatarSpirit;

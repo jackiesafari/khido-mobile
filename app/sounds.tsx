@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
@@ -36,7 +36,7 @@ export default function SoundsScreen() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
-  const audioRef = useRef<Audio.Sound | null>(null);
+  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
 
   const barA = useRef(new Animated.Value(0.3)).current;
   const barB = useRef(new Animated.Value(0.5)).current;
@@ -82,26 +82,22 @@ export default function SoundsScreen() {
     barC.setValue(0.4);
   };
 
-  const unloadAudio = async () => {
-    if (!audioRef.current) return;
-    await audioRef.current.unloadAsync();
-    audioRef.current = null;
+  const stopAudio = () => {
+    if (playerRef.current) {
+      playerRef.current.release();
+      playerRef.current = null;
+    }
   };
 
   const playSound = async (soundId: SoundId) => {
     setIsLoading(true);
     setAudioError(null);
     try {
-      await unloadAudio();
-      const { sound } = await Audio.Sound.createAsync(
-        SOUND_SOURCES[soundId],
-        {
-          shouldPlay: true,
-          isLooping: true,
-          volume: 0.9,
-        }
-      );
-      audioRef.current = sound;
+      stopAudio();
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
+      const player = createAudioPlayer(SOUND_SOURCES[soundId], { loop: true });
+      playerRef.current = player;
+      player.play();
       setActiveSound(soundId);
       setIsPlaying(true);
       startVisualizer();
@@ -117,13 +113,13 @@ export default function SoundsScreen() {
   const handleToggle = async (soundId: SoundId) => {
     if (isLoading) return;
 
-    if (activeSound === soundId && audioRef.current) {
+    if (activeSound === soundId && playerRef.current) {
       if (isPlaying) {
-        await audioRef.current.pauseAsync();
+        playerRef.current.pause();
         setIsPlaying(false);
         stopVisualizer();
       } else {
-        await audioRef.current.playAsync();
+        playerRef.current.play();
         setIsPlaying(true);
         startVisualizer();
       }
@@ -134,18 +130,10 @@ export default function SoundsScreen() {
   };
 
   useEffect(() => {
-    Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      shouldDuckAndroid: true,
-      staysActiveInBackground: false,
-    }).catch(() => undefined);
-
+    setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => undefined);
     return () => {
       loopRef.current?.stop();
-      if (audioRef.current) {
-        audioRef.current.unloadAsync().catch(() => undefined);
-        audioRef.current = null;
-      }
+      stopAudio();
     };
   }, []);
 

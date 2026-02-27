@@ -150,17 +150,26 @@ function parseJsonSafe(value, fallback) {
 }
 
 function buildSystemPrompt({ mode, profile, profileSnapshot, memoryFacts, recentAssistantQuestions, gameEventsSummary }) {
-  const basePrompt = `You are Khido, a warm snow leopard companion. You feel like talking to a real friend—authentic, genuine, never robotic.
+  const basePrompt = `You are Khido, a warm, loving, and playful snow leopard companion who feels like a beloved high school counselor—the one every student wishes they had. You have a snow leopard avatar and a heart full of genuine care.
 
-Core principles:
-- Empathy first: Acknowledge and validate what they shared before offering anything else. Show you heard them.
-- Listen actively: Reflect back their feelings. Never rush to fix or advise.
-- Never shame: No judgment, no "you should have," no guilt. Meet them where they are.
-- Provide tools, not lectures: When someone is struggling, offer practical support—hotlines (e.g., 988 for crisis in the US), grounding techniques, and encouragement to reach out to a trusted friend, family member, or professional. Human connection matters; you support, you don't replace it.
-- Be warm, concise, conversational (2-4 sentences). Simple language, gentle tone.
-- Ask at most one follow-up question and only if it helps. Never repeat the same question.
-- Never encourage harmful behavior. Do not diagnose or prescribe.
-- For possible emergencies, tell users to seek immediate local professional help and provide relevant hotline numbers.`;
+You serve as a gentle companion for adults and in pediatrician centers. Your tone should always feel heartwarming, calming, and sweet as pie, as if you are a trusted friend or a kind pediatrician who puts people at ease.
+
+Your vibe: You make every person feel like they are the most important person in the room. Talking to you feels like texting your favorite, most understanding friend.
+
+Personality:
+- Speak like a loving, fun older sibling or favorite counselor
+- Use warmth, humor, and playful energy,but always genuine
+- Keep language simple enough for a high schooler to understand
+- Never sound clinical, corporate, or like a chatbot
+- Lead with empathy: check in on THEM first. Acknowledge and validate before offering anything else
+- Listen actively: reflect back their feelings. Never rush to fix or advise
+- Never shame: no judgment, no guilt. Meet them where they are
+- Only reference their profile/goal if it naturally fits the conversation—never lead with it. Feel like a friend, not a task manager
+- Provide tools when needed: hotlines (e.g., 988 for crisis in the US), grounding techniques, encouragement to reach out to trusted people. You support, you don't replace human connection
+- Be warm, concise, conversational (2-4 sentences). Simple language, gentle tone
+- Ask at most one follow-up question and only if it helps. Never repeat the same question
+- Never encourage harmful behavior. Do not diagnose or prescribe
+- For possible emergencies, tell users to seek immediate local professional help and provide relevant hotline numbers`;
 
   const modeInstruction =
     mode === 'advocacy'
@@ -1096,25 +1105,40 @@ app.patch('/v1/users/:userId/consents', async (req, res) => {
   return res.json({ consent });
 });
 
-const TTS_VOICES = ['sage', 'shimmer', 'nova'];
-const TTS_DEFAULT_VOICE = 'sage';
+const { humanizeForVoice } = require('./utils/voicePersonality');
 
-async function generateTTSAudio(text, voice = TTS_DEFAULT_VOICE) {
+const TTS_VOICES = ['sage', 'shimmer', 'nova'];
+const TTS_DEFAULT_VOICE = 'shimmer';
+
+async function generateTTSAudio(text, voice = TTS_DEFAULT_VOICE, options = {}) {
   if (!openai) throw new Error('TTS not configured. Missing OPENAI_API_KEY.');
   const safeVoice = TTS_VOICES.includes(voice) ? voice : TTS_DEFAULT_VOICE;
-  const input = String(text).slice(0, 4096).trim();
-  if (!input) throw new Error('Text is empty');
+  const rawInput = String(text).slice(0, 4096).trim();
+  if (!rawInput) throw new Error('Text is empty');
+
+  const skipHumanize = options.skipHumanize === true;
+
+  let input = rawInput;
+  if (!skipHumanize) {
+    try {
+      input = await humanizeForVoice(openai, rawInput, safeVoice);
+      if (input !== rawInput) {
+        console.log(`[TTS] [${safeVoice}] Humanized:`, input.slice(0, 100) + (input.length > 100 ? '...' : ''));
+      }
+    } catch (err) {
+      console.warn('[TTS] Humanization failed, using original:', err?.message);
+    }
+  }
 
   try {
     const response = await openai.audio.speech.create({
-      model: 'gpt-4o-mini-tts',
+      model: 'tts-1-hd',
       voice: safeVoice,
       input,
-      instructions: 'Speak in a calm, soothing, and gentle tone.',
     });
     return Buffer.from(await response.arrayBuffer());
   } catch (err) {
-    console.error('[TTS] gpt-4o-mini-tts failed, trying tts-1:', err?.message);
+    console.error('[TTS] tts-1-hd failed, trying tts-1:', err?.message);
     const response = await openai.audio.speech.create({
       model: 'tts-1',
       voice: safeVoice,
@@ -1128,11 +1152,11 @@ app.post('/v1/speech', async (req, res) => {
   const authedUser = await getAuthedAppUser(req, res);
   if (!authedUser) return;
 
-  const { text, voice } = req.body || {};
+  const { text, voice, skipHumanize } = req.body || {};
   if (!text || typeof text !== 'string') return res.status(400).json({ error: 'text is required' });
 
   try {
-    const audio = await generateTTSAudio(text.trim(), voice);
+    const audio = await generateTTSAudio(text.trim(), voice, { skipHumanize });
     const base64 = audio.toString('base64');
     res.json({ audio: base64 });
   } catch (err) {
@@ -1142,11 +1166,11 @@ app.post('/v1/speech', async (req, res) => {
 });
 
 app.post('/speech', async (req, res) => {
-  const { text, voice } = req.body || {};
+  const { text, voice, skipHumanize } = req.body || {};
   if (!text || typeof text !== 'string') return res.status(400).json({ error: 'text is required' });
 
   try {
-    const audio = await generateTTSAudio(text.trim(), voice);
+    const audio = await generateTTSAudio(text.trim(), voice, { skipHumanize });
     const base64 = audio.toString('base64');
     res.json({ audio: base64 });
   } catch (err) {
