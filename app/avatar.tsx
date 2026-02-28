@@ -89,7 +89,7 @@ export default function AvatarScreen() {
       const uri = await fetchTTSAudio(text, VOICE, opts);
       const player = createAudioPlayer(uri);
       playerRef.current = player;
-      player.setPlaybackRate(1.1, 'high');
+      player.setPlaybackRate(1.0, 'high');
       player.play();
       const onFinish = () => {
         player.removeListener('playbackStatusUpdate', onFinish);

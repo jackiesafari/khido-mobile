@@ -964,7 +964,9 @@ app.get('/', (req, res) => {
   var hash = window.location.hash || '';
   var query = window.location.search || '';
   if (hash || query.indexOf('token_hash=') !== -1 || query.indexOf('access_token=') !== -1) {
-    var next = 'khido://auth';
+    var params = new URLSearchParams(query);
+    var nextParam = params.get('next') || '';
+    var next = (nextParam.startsWith('khido://') || nextParam.startsWith('exp://')) ? nextParam : 'khido://auth';
     window.location.replace('/auth/callback?next=' + encodeURIComponent(next) + query + hash);
     return;
   }
