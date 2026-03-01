@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -20,6 +22,12 @@ import {
   updateProfile,
   type UserProfile,
 } from '@/lib/profile-store';
+import {
+  calculateProfileCompletion,
+  loadProfileFromSupabase,
+  markFeatureUsed,
+  saveProfileToSupabase,
+} from '@/lib/profile-sync';
 
 type AvatarCard = {
   id: AvatarSpirit;
@@ -115,19 +123,10 @@ function MascotBubble({ option, size = 94 }: { option: AvatarCard; size?: number
 
 export default function ProfileScreen() {
   const [draft, setDraft] = useState<UserProfile>(getProfileSnapshot());
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const completion = useMemo(() => {
-    const checks = [
-      draft.displayName,
-      draft.calmAlias,
-      draft.avatarSpirit,
-      draft.favoriteAnimal,
-      draft.comfortPhrase,
-      draft.supportGoal,
-      draft.sensoryReset,
-      draft.celebrationStyle,
-    ];
-    const filled = checks.filter((value) => value.trim().length > 0).length;
-    return Math.round((filled / checks.length) * 100);
+    return calculateProfileCompletion(draft);
   }, [draft]);
 
   const selectedAvatar = AVATAR_CHOICES.find((choice) => choice.id === draft.avatarSpirit) ?? AVATAR_CHOICES[0];
@@ -136,9 +135,44 @@ export default function ProfileScreen() {
     setDraft((current) => ({ ...current, [key]: value }));
   };
 
-  const handleSave = () => {
-    updateProfile(draft);
-    router.back();
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const remote = await loadProfileFromSupabase();
+        if (active && remote) {
+          setDraft(remote);
+          updateProfile(remote);
+        }
+      } catch (error) {
+        console.warn('[profile] failed to load profile', error);
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    })();
+    void markFeatureUsed('profile').catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const saved = await saveProfileToSupabase(draft);
+      if (saved) {
+        updateProfile(saved);
+      } else {
+        updateProfile(draft);
+      }
+      router.back();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save profile right now.';
+      Alert.alert('Save failed', message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleBack = () => {
@@ -155,9 +189,16 @@ export default function ProfileScreen() {
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Profile</Text>
             <TouchableOpacity onPress={handleSave} style={styles.saveButton} activeOpacity={0.85}>
-              <Text style={styles.saveButtonText}>Save</Text>
+              {isSaving ? <ActivityIndicator size="small" color="#042F2E" /> : <Text style={styles.saveButtonText}>Save</Text>}
             </TouchableOpacity>
           </View>
+
+          {isLoading && (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color="#E2E8F0" />
+              <Text style={styles.loadingText}>Loading profile...</Text>
+            </View>
+          )}
 
           <View style={styles.heroCard}>
             <MascotBubble option={selectedAvatar} />
@@ -314,7 +355,7 @@ export default function ProfileScreen() {
           </View>
 
           <TouchableOpacity onPress={handleSave} style={styles.footerButton} activeOpacity={0.85}>
-            <Text style={styles.footerButtonText}>Save profile</Text>
+            <Text style={styles.footerButtonText}>{isSaving ? 'Saving...' : 'Save profile'}</Text>
           </TouchableOpacity>
         </ScrollView>
       </LinearGradient>
@@ -364,6 +405,17 @@ const styles = StyleSheet.create({
     color: '#042F2E',
     fontWeight: '800',
     fontSize: 14,
+  },
+  loadingRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  loadingText: {
+    color: '#CBD5E1',
+    fontSize: 13,
+    fontWeight: '600',
   },
   heroCard: {
     borderRadius: 24,

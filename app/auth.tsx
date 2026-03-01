@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
-import { completeAuthFromUrl, sendEmailOtp, signInWithAppleIdentity, verifyEmailOtp } from '@/lib/auth';
+import { applyDailyVisitReward } from '@/lib/profile-sync';
+import { sendEmailOtp, signInWithAppleIdentity, verifyEmailOtp } from '@/utils/supabase';
 import { Routes } from '@/types/navigation';
 
 let AppleAuthentication: any = null;
@@ -23,42 +23,6 @@ export default function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const canUseAppleSignIn = Platform.OS === 'ios' && Boolean(AppleAuthentication?.AppleAuthenticationButton);
-  const incomingUrl = Linking.useURL();
-
-  useEffect(() => {
-    let mounted = true;
-    const handleInitialUrl = async () => {
-      const initialUrl = await Linking.getInitialURL();
-      if (!mounted || !initialUrl) return;
-      try {
-        const completed = await completeAuthFromUrl(initialUrl);
-        if (completed) {
-          router.replace(Routes.DASHBOARD);
-        }
-      } catch {
-        // Keep user on code flow if link handling fails.
-      }
-    };
-    handleInitialUrl();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!incomingUrl) return;
-    const handleIncomingUrl = async () => {
-      try {
-        const completed = await completeAuthFromUrl(incomingUrl);
-        if (completed) {
-          router.replace(Routes.DASHBOARD);
-        }
-      } catch {
-        setError('Sign-in link could not be completed. You can still use the code from your email.');
-      }
-    };
-    handleIncomingUrl();
-  }, [incomingUrl]);
 
   const handleSendCode = async () => {
     const normalizedEmail = email.trim().toLowerCase();
@@ -72,7 +36,7 @@ export default function AuthScreen() {
     try {
       await sendEmailOtp(normalizedEmail);
       setStep('verify');
-      setMessage('Check your email. You can either tap the sign-in link or enter the code here.');
+      setMessage('Check your email and enter the 6-digit code below.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send code.');
     } finally {
@@ -91,6 +55,7 @@ export default function AuthScreen() {
     setError(null);
     try {
       await verifyEmailOtp(normalizedEmail, normalizedCode);
+      await applyDailyVisitReward().catch(() => null);
       router.replace(Routes.DASHBOARD);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to verify code.');
@@ -118,6 +83,7 @@ export default function AuthScreen() {
         identityToken: credential.identityToken,
         authorizationCode: credential.authorizationCode || undefined,
       });
+      await applyDailyVisitReward().catch(() => null);
       router.replace(Routes.DASHBOARD);
     } catch (err: any) {
       if (err?.code === 'ERR_REQUEST_CANCELED') {

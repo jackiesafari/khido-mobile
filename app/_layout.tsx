@@ -7,12 +7,17 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ensureAudioDirectory } from '@/lib/audio-manager';
+import { applyDailyVisitReward } from '@/lib/profile-sync';
+import { recoverAuthSession } from '@/utils/supabase';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
 
   useEffect(() => {
     ensureAudioDirectory().catch(() => {});
+    recoverAuthSession()
+      .then(() => applyDailyVisitReward())
+      .catch(() => {});
   }, []);
 
   return (

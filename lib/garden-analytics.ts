@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { getAccessToken } from '@/lib/auth';
+import { getAccessToken } from '@/utils/supabase';
 import { CHAT_API_URL } from '@/lib/chat-api';
 
 type GardenEventType =
@@ -77,8 +77,8 @@ function toServerPayload(event: GardenAnalyticsEvent) {
   };
 }
 
-function persistToApi(event: GardenAnalyticsEvent) {
-  const token = getAccessToken();
+async function persistToApi(event: GardenAnalyticsEvent) {
+  const token = await getAccessToken();
   if (!token) return;
 
   fetch(`${CHAT_API_URL}/v1/game-events`, {
@@ -112,7 +112,7 @@ export function logGardenEvent(input: {
 
   memoryStore.push(event);
   persistToStorage();
-  persistToApi(event);
+  void persistToApi(event);
   return event;
 }
 

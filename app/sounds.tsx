@@ -4,6 +4,7 @@ import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
+import { markFeatureUsed } from '@/lib/profile-sync';
 import { Routes } from '@/types/navigation';
 
 type SoundId = 'rain' | 'waterfall' | 'birds' | 'frogs' | 'generalNature';
@@ -131,6 +132,7 @@ export default function SoundsScreen() {
 
   useEffect(() => {
     setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => undefined);
+    void markFeatureUsed('sounds').catch(() => undefined);
     return () => {
       loopRef.current?.stop();
       stopAudio();

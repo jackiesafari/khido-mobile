@@ -3,7 +3,7 @@ import { ActivityIndicator, Animated, SafeAreaView, StyleSheet, Text, TouchableO
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { openBrowserAsync, WebBrowserPresentationStyle } from 'expo-web-browser';
-import { type AVPlaybackStatus, ResizeMode, Video } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialIcons } from '@expo/vector-icons';
 import { ThemedView } from '@/components/themed-view';
 import { logGardenEvent } from '@/lib/garden-analytics';
@@ -26,7 +26,6 @@ const DEFAULT_YOUTUBE_REWARDS: RewardSource[] = [
   { key: 'yt-nature-calm', kind: 'youtube', title: 'Calm Nature Video', uri: 'https://www.youtube.com/watch?v=eKFTSSKCzWA' },
 ];
 
-const FALLBACK_LOCAL_REWARD = require('@/assets/images/avatar-video.mp4');
 let lastRewardKey: string | null = null;
 
 type ExtraConfig = {
@@ -108,16 +107,22 @@ function chooseNonRepeating(candidates: RewardSource[]): RewardSource {
 }
 
 export default function GardenRewardScreen() {
-  const videoRef = useRef<Video | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [didFinish, setDidFinish] = useState(false);
-  const [usingLocalFallback, setUsingLocalFallback] = useState(false);
+  const [usingYoutubeFallback, setUsingYoutubeFallback] = useState(false);
   const [hasTriedYoutubeFallback, setHasTriedYoutubeFallback] = useState(false);
   const affirmationOpacity = useRef(new Animated.Value(0)).current;
 
   const rewardPools = useMemo(() => buildConfiguredRewards(), []);
   const selectedStream = useMemo(() => chooseNonRepeating(rewardPools.streams), [rewardPools.streams]);
   const backupYoutube = useMemo(() => chooseNonRepeating(rewardPools.youtubes), [rewardPools.youtubes]);
+
+  const rewardPlayer = useVideoPlayer({ uri: selectedStream.uri }, (player) => {
+    player.loop = false;
+    player.muted = false;
+    player.play();
+  });
+
   const affirmation = useMemo(() => {
     const base = [
       'Take this moment in.',
@@ -157,36 +162,7 @@ export default function GardenRewardScreen() {
     animateAffirmation();
   }, [animateAffirmation]);
 
-  const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
-    if (!status.isLoaded) return;
-    setIsLoading(false);
-    if (status.didJustFinish) {
-      setDidFinish(true);
-      logGardenEvent({
-        sessionSeed: 0,
-        levelId: 14,
-        eventType: 'tile_tap_pattern',
-        payload: { source: 'reward_video_finished', rewardKey: selectedStream.key },
-      });
-    }
-  };
-
-  const handleStreamError = () => {
-    if (usingLocalFallback) return;
-    setUsingLocalFallback(true);
-    setIsLoading(true);
-    logGardenEvent({
-      sessionSeed: 0,
-      levelId: 14,
-      eventType: 'tile_tap_pattern',
-      payload: {
-        source: 'reward_video_fallback_local',
-        failedStreamKey: selectedStream.key,
-      },
-    });
-  };
-
-  const openYoutubeBackup = async () => {
+  const openYoutubeBackup = useCallback(async () => {
     if (hasTriedYoutubeFallback) return;
     try {
       setHasTriedYoutubeFallback(true);
@@ -205,13 +181,49 @@ export default function GardenRewardScreen() {
         },
       });
     } finally {
-      // Keep hidden fallback silent.
+      setIsLoading(false);
     }
-  };
+  }, [backupYoutube.key, backupYoutube.uri, hasTriedYoutubeFallback]);
 
-  const handleLocalVideoError = () => {
-    openYoutubeBackup().catch(() => undefined);
-  };
+  useEffect(() => {
+    const statusSub = rewardPlayer.addListener('statusChange', ({ status, error }) => {
+      if (status === 'readyToPlay') {
+        setIsLoading(false);
+      }
+
+      if (status === 'error' || error) {
+        if (usingYoutubeFallback) return;
+        setUsingYoutubeFallback(true);
+        setIsLoading(false);
+        logGardenEvent({
+          sessionSeed: 0,
+          levelId: 14,
+          eventType: 'tile_tap_pattern',
+          payload: {
+            source: 'reward_video_fallback_youtube',
+            failedStreamKey: selectedStream.key,
+          },
+        });
+        openYoutubeBackup().catch(() => undefined);
+      }
+    });
+
+    const endSub = rewardPlayer.addListener('playToEnd', () => {
+      setDidFinish(true);
+      setIsLoading(false);
+      logGardenEvent({
+        sessionSeed: 0,
+        levelId: 14,
+        eventType: 'tile_tap_pattern',
+        payload: { source: 'reward_video_finished', rewardKey: selectedStream.key },
+      });
+    });
+
+    return () => {
+      statusSub.remove();
+      endSub.remove();
+    };
+  }, [openYoutubeBackup, rewardPlayer, selectedStream.key, usingYoutubeFallback]);
 
   const handleContinue = () => {
     router.replace(Routes.GAMES);
@@ -221,16 +233,8 @@ export default function GardenRewardScreen() {
     <SafeAreaView style={styles.container}>
       <ThemedView style={styles.background} lightColor="#0B1C2C" darkColor="#0B1C2C">
         <View style={styles.videoWrap}>
-          <Video
-            ref={videoRef}
-            source={usingLocalFallback ? FALLBACK_LOCAL_REWARD : { uri: selectedStream.uri }}
-            style={styles.video}
-            resizeMode={ResizeMode.COVER}
-            shouldPlay
-            isLooping={false}
-            onPlaybackStatusUpdate={onPlaybackStatusUpdate}
-            onError={usingLocalFallback ? handleLocalVideoError : handleStreamError}
-          />
+          <VideoView player={rewardPlayer} style={styles.video} contentFit="cover" nativeControls={false} />
+
           <View style={styles.affirmationWrap} pointerEvents="none">
             <Animated.View style={[styles.affirmationCloud, { opacity: affirmationOpacity }]}>
               <View style={styles.affirmationFogLayer} />
@@ -239,12 +243,11 @@ export default function GardenRewardScreen() {
               </View>
             </Animated.View>
           </View>
+
           {isLoading && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color="#FFFFFF" />
-              <Text style={styles.loadingText}>
-                {usingLocalFallback ? 'Loading offline reward video...' : 'Loading your reward video...'}
-              </Text>
+              <Text style={styles.loadingText}>Loading your reward video...</Text>
             </View>
           )}
         </View>
@@ -252,9 +255,7 @@ export default function GardenRewardScreen() {
         <View style={styles.footer}>
           <Text style={styles.title}>Great job finishing all 14 levels</Text>
           <Text style={styles.subtitle}>
-            {usingLocalFallback
-              ? 'Network unavailable: playing local fallback.'
-              : selectedStream.title}
+            {usingYoutubeFallback ? 'Streaming reward unavailable: opened YouTube fallback.' : selectedStream.title}
           </Text>
 
           {didFinish ? (

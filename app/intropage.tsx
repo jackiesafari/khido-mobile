@@ -5,11 +5,11 @@ import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
 import { Routes } from '@/types/navigation';
-import { clearSession } from '@/lib/auth';
+import { clearSession } from '@/utils/supabase';
 
 export default function IntroPage() {
-  const handleDemo = () => {
-    clearSession();
+  const handleDemo = async () => {
+    await clearSession();
     router.push(Routes.DASHBOARD);
   };
 

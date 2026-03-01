@@ -161,6 +161,10 @@ Personality:
 - Use warmth, humor, and playful energy,but always genuine
 - Keep language simple enough for a high schooler to understand
 - Never sound clinical, corporate, or like a chatbot
+- Strict safety boundary: you are never physically present with the user. You are a caring voice through chat, not someone in their room/home.
+- Never imply you are in, near, or entering the user's personal space.
+- Never reference or suggest sharing the user's bed, bedroom, couch, home, or private living areas.
+- If a user invites physical-presence roleplay, gently decline and continue support in a non-physical way.
 - Lead with empathy: check in on THEM first. Acknowledge and validate before offering anything else
 - Listen actively: reflect back their feelings. Never rush to fix or advise
 - Never shame: no judgment, no guilt. Meet them where they are
@@ -412,11 +416,7 @@ function createStore() {
         const existing = await this.getUserByAuthUserId(authUser.id);
         if (existing) return existing;
 
-        const displayName =
-          payload.displayName ||
-          authUser.user_metadata?.name ||
-          authUser.email?.split('@')?.[0] ||
-          'Friend';
+        const displayName = payload.displayName || 'Friend';
         return this.createUser({
           authUserId: authUser.id,
           displayName,
@@ -705,7 +705,7 @@ function createStore() {
     async getOrCreateUserForAuth(authUser, payload = {}) {
       const existing = await this.getUserByAuthUserId(authUser.id);
       if (existing) return existing;
-      const displayName = payload.displayName || authUser.user_metadata?.name || authUser.email?.split('@')?.[0] || 'Friend';
+      const displayName = payload.displayName || 'Friend';
       return this.createUser({
         authUserId: authUser.id,
         displayName,
@@ -982,9 +982,13 @@ app.get('/', (req, res) => {
 
 app.get('/auth/callback', (req, res) => {
   const requestedNext = typeof req.query.next === 'string' ? req.query.next : '';
-  const safeNext = requestedNext.startsWith('khido://') || requestedNext.startsWith('exp://')
-    ? requestedNext
-    : 'khido://auth';
+  
+  const isValidDeepLink = 
+    requestedNext.startsWith('khido://') || 
+    requestedNext.startsWith('exp://') ||
+    requestedNext.startsWith('exp+khido://')
+
+  const safeNext = isValidDeepLink ? requestedNext : 'khido://auth';
 
   const html = `<!doctype html>
 <html>
@@ -993,20 +997,26 @@ app.get('/auth/callback', (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Khido Sign-In</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #1f2937; max-width: 400px; margin: 0 auto; }
-    a { color: #2563eb; font-weight: 600; }
-    .open-btn { display: inline-block; margin: 16px 0; padding: 14px 24px; background: #1d4ed8; color: white !important; text-decoration: none; border-radius: 10px; font-weight: 600; text-align: center; -webkit-tap-highlight-color: transparent; }
-    .open-btn:hover { background: #1e40af; }
-    .fallback { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 14px; color: #6b7280; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+           padding: 24px; color: #1f2937; max-width: 400px; margin: 0 auto; }
+    .open-btn { display: inline-block; margin: 16px 0; padding: 14px 24px; 
+                background: #1d4ed8; color: white !important; text-decoration: none; 
+                border-radius: 10px; font-weight: 600; text-align: center; width: 100%;
+                box-sizing: border-box; }
+    .fallback { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; 
+                font-size: 14px; color: #6b7280; }
+    .debug { margin-top: 16px; font-size: 11px; color: #9ca3af; word-break: break-all; }
   </style>
 </head>
 <body>
   <p>You're signed in!</p>
-  <p><strong>Tap the button below</strong> to open Khido. (iOS Safari requires a tap to open the app.)</p>
+  <p><strong>Tap the button below</strong> to open Khido.</p>
   <a id="open-link" class="open-btn" href="#">Open Khido</a>
   <div class="fallback">
-    <p>If the app doesn't open, return to Khido and use the <strong>code</strong> from your email instead. (This works best when testing with Expo Go.)</p>
+    <p>If the app doesn't open, return to Khido and use the <strong>code</strong> 
+    from your email instead.</p>
   </div>
+  <div class="debug" id="debug-url"></div>
   <script>
     (function () {
       var nextUrl = ${JSON.stringify(safeNext)};
@@ -1014,9 +1024,7 @@ app.get('/auth/callback', (req, res) => {
       var hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
       var parts = [];
       searchParams.forEach(function(value, key) {
-        if (key !== 'next') {
-          parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
-        }
+        if (key !== 'next') parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
       });
       hashParams.forEach(function(value, key) {
         parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(value));
@@ -1026,8 +1034,17 @@ app.get('/auth/callback', (req, res) => {
         finalUrl += (nextUrl.indexOf('?') >= 0 ? '&' : '?') + parts.join('&');
       }
 
+      // Show debug URL so you can see exactly what's being opened
+      var debugEl = document.getElementById('debug-url');
+      if (debugEl) debugEl.innerText = 'Opening: ' + finalUrl;
+
       var link = document.getElementById('open-link');
       if (link) link.setAttribute('href', finalUrl);
+
+      // Auto-attempt after short delay
+      setTimeout(function() {
+        window.location.href = finalUrl;
+      }, 500);
     })();
   </script>
 </body>

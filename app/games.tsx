@@ -15,6 +15,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { IsoBoard, type BridgeDotData, type IsoBoardTheme, type TileData } from '@/components/IsoBoard';
 import { ThemedView } from '@/components/themed-view';
 import { logGardenEvent } from '@/lib/garden-analytics';
+import { markFeatureUsed, recordGameCompletion } from '@/lib/profile-sync';
 import { Routes } from '@/types/navigation';
 
 type GameType = 'breathing' | 'ripples' | 'puzzle';
@@ -236,10 +237,77 @@ function dirsToTile(d1: Direction, d2: Direction): { kind: PuzzleKind; rotation:
 
 type PathDirection = 'left_to_right' | 'right_to_left' | 'top_to_bottom' | 'bottom_to_top';
 
-function buildPath(cols: number, rows: number, rng: RNG, direction: PathDirection = 'left_to_right'): Point[] {
+type BuildPathOptions = {
+  forwardBias: number;
+  wanderBias: number;
+  revisitPenalty: number;
+  maxStepsMultiplier: number;
+};
+
+type LevelGenerationConfig = {
+  cols: number;
+  rows: number;
+  directions: PathDirection[];
+  minTurns: number;
+  targetLength: number;
+  scrambleBoost: number;
+  perspectiveLinks: number;
+  decorDensity: number;
+};
+
+const LEVEL_GENERATION_CONFIGS: LevelGenerationConfig[] = [
+  { cols: 3, rows: 3, directions: ['left_to_right'], minTurns: 1, targetLength: 4, scrambleBoost: 0, perspectiveLinks: 0, decorDensity: 0.34 },
+  { cols: 4, rows: 3, directions: ['top_to_bottom', 'right_to_left'], minTurns: 2, targetLength: 6, scrambleBoost: 0, perspectiveLinks: 0, decorDensity: 0.36 },
+  { cols: 4, rows: 4, directions: ['right_to_left', 'bottom_to_top'], minTurns: 3, targetLength: 7, scrambleBoost: 0, perspectiveLinks: 1, decorDensity: 0.38 },
+  { cols: 5, rows: 4, directions: ['bottom_to_top', 'left_to_right'], minTurns: 4, targetLength: 8, scrambleBoost: 1, perspectiveLinks: 1, decorDensity: 0.4 },
+  { cols: 5, rows: 4, directions: ['top_to_bottom', 'left_to_right', 'right_to_left'], minTurns: 4, targetLength: 9, scrambleBoost: 1, perspectiveLinks: 1, decorDensity: 0.42 },
+  { cols: 5, rows: 5, directions: ['right_to_left', 'top_to_bottom'], minTurns: 5, targetLength: 10, scrambleBoost: 1, perspectiveLinks: 1, decorDensity: 0.45 },
+  { cols: 6, rows: 5, directions: ['left_to_right', 'bottom_to_top'], minTurns: 6, targetLength: 12, scrambleBoost: 1, perspectiveLinks: 2, decorDensity: 0.46 },
+  { cols: 6, rows: 5, directions: ['top_to_bottom', 'right_to_left'], minTurns: 6, targetLength: 13, scrambleBoost: 1, perspectiveLinks: 2, decorDensity: 0.46 },
+  { cols: 6, rows: 6, directions: ['bottom_to_top', 'left_to_right'], minTurns: 7, targetLength: 14, scrambleBoost: 2, perspectiveLinks: 2, decorDensity: 0.48 },
+  { cols: 6, rows: 6, directions: ['right_to_left', 'top_to_bottom', 'left_to_right'], minTurns: 8, targetLength: 15, scrambleBoost: 2, perspectiveLinks: 2, decorDensity: 0.5 },
+  { cols: 6, rows: 6, directions: ['left_to_right', 'bottom_to_top', 'top_to_bottom'], minTurns: 8, targetLength: 16, scrambleBoost: 2, perspectiveLinks: 2, decorDensity: 0.52 },
+  { cols: 6, rows: 6, directions: ['top_to_bottom', 'right_to_left'], minTurns: 9, targetLength: 17, scrambleBoost: 2, perspectiveLinks: 3, decorDensity: 0.54 },
+  { cols: 6, rows: 6, directions: ['bottom_to_top', 'left_to_right'], minTurns: 9, targetLength: 18, scrambleBoost: 2, perspectiveLinks: 3, decorDensity: 0.56 },
+  { cols: 6, rows: 6, directions: ['right_to_left', 'top_to_bottom'], minTurns: 10, targetLength: 19, scrambleBoost: 3, perspectiveLinks: 3, decorDensity: 0.58 },
+];
+
+function chooseWeightedPoint(rng: RNG, candidates: { point: Point; score: number }[]): Point {
+  const total = candidates.reduce((sum, candidate) => sum + Math.max(0.1, candidate.score), 0);
+  let threshold = rng() * total;
+  for (const candidate of candidates) {
+    threshold -= Math.max(0.1, candidate.score);
+    if (threshold <= 0) return candidate.point;
+  }
+  return candidates[candidates.length - 1].point;
+}
+
+function countTurns(path: Point[]): number {
+  if (path.length < 3) return 0;
+  let turns = 0;
+  for (let i = 2; i < path.length; i += 1) {
+    const prevDir = directionBetween(path[i - 2], path[i - 1]);
+    const nextDir = directionBetween(path[i - 1], path[i]);
+    if (prevDir !== nextDir) turns += 1;
+  }
+  return turns;
+}
+
+function buildPath(
+  cols: number,
+  rows: number,
+  rng: RNG,
+  direction: PathDirection = 'left_to_right',
+  options?: Partial<BuildPathOptions>
+): Point[] {
+  const forwardBias = options?.forwardBias ?? 2.8;
+  const wanderBias = options?.wanderBias ?? 1.4;
+  const revisitPenalty = options?.revisitPenalty ?? 2.2;
+  const maxStepsMultiplier = options?.maxStepsMultiplier ?? 9;
+
   let start: Point;
   let isAtGoal: (p: Point) => boolean;
-  let biasDir: (candidates: Point[], current: Point) => Point[];
+  let isForwardMove: (from: Point, to: Point) => boolean;
   let goal: Point;
 
   switch (direction) {
@@ -247,34 +315,30 @@ function buildPath(cols: number, rows: number, rng: RNG, direction: PathDirectio
       start = { x: cols - 1, y: randomInt(rng, 0, rows - 1) };
       goal = { x: 0, y: start.y };
       isAtGoal = (p) => p.x <= 0;
-      biasDir = (candidates, current) =>
-        candidates.flatMap((c) => (c.x < current.x ? [c, c, c] : [c]));
+      isForwardMove = (from, to) => to.x < from.x;
       break;
     case 'top_to_bottom':
       start = { x: randomInt(rng, 0, cols - 1), y: 0 };
       goal = { x: start.x, y: rows - 1 };
       isAtGoal = (p) => p.y >= rows - 1;
-      biasDir = (candidates, current) =>
-        candidates.flatMap((c) => (c.y > current.y ? [c, c, c] : [c]));
+      isForwardMove = (from, to) => to.y > from.y;
       break;
     case 'bottom_to_top':
       start = { x: randomInt(rng, 0, cols - 1), y: rows - 1 };
       goal = { x: start.x, y: 0 };
       isAtGoal = (p) => p.y <= 0;
-      biasDir = (candidates, current) =>
-        candidates.flatMap((c) => (c.y < current.y ? [c, c, c] : [c]));
+      isForwardMove = (from, to) => to.y < from.y;
       break;
     default:
       start = { x: 0, y: randomInt(rng, 0, rows - 1) };
       goal = { x: cols - 1, y: start.y };
       isAtGoal = (p) => p.x >= cols - 1;
-      biasDir = (candidates, current) =>
-        candidates.flatMap((c) => (c.x > current.x ? [c, c, c] : [c]));
+      isForwardMove = (from, to) => to.x > from.x;
   }
 
   const path: Point[] = [start];
   const visited = new Set([pointKey(start)]);
-  const maxSteps = cols * rows * 8;
+  const maxSteps = cols * rows * maxStepsMultiplier;
   let steps = 0;
 
   while (!isAtGoal(path[path.length - 1]) && steps < maxSteps) {
@@ -286,17 +350,18 @@ function buildPath(cols: number, rows: number, rng: RNG, direction: PathDirectio
     if (current.y > 0) candidates.push({ x: current.x, y: current.y - 1 });
     if (current.y < rows - 1) candidates.push({ x: current.x, y: current.y + 1 });
 
-    const weighted = biasDir(candidates, current);
-    const unvisited = weighted.filter((c) => !visited.has(pointKey(c)));
-    const nearestGoal = [...weighted].sort((a, b) => {
-      const da = Math.abs(goal.x - a.x) + Math.abs(goal.y - a.y);
-      const db = Math.abs(goal.x - b.x) + Math.abs(goal.y - b.y);
-      return da - db;
-    })[0];
-    const next =
-      unvisited.length > 0
-        ? randomFrom(rng, unvisited)
-        : (nearestGoal ?? weighted[0]);
+    const scoredCandidates = candidates.map((candidate) => {
+      const manhattan = Math.abs(goal.x - candidate.x) + Math.abs(goal.y - candidate.y);
+      const visitedPenalty = visited.has(pointKey(candidate)) ? revisitPenalty : 0;
+      const forward = isForwardMove(current, candidate) ? forwardBias : 0;
+      const lateral = !isForwardMove(current, candidate) ? wanderBias : 0;
+      const distanceBias = Math.max(0, cols + rows - manhattan);
+      return {
+        point: candidate,
+        score: 1 + forward + lateral + distanceBias - visitedPenalty,
+      };
+    });
+    const next = chooseWeightedPoint(rng, scoredCandidates);
 
     if (!next) break;
 
@@ -320,9 +385,9 @@ function buildPath(cols: number, rows: number, rng: RNG, direction: PathDirectio
 
 function buildProceduralLevel(levelId: number, sessionSeed: number): PuzzleLevel {
   const rng = createSeededRandom(sessionSeed + levelId * 104729);
-  const difficulty = levelId - 1;
-  const cols = Math.min(6, 3 + Math.floor(difficulty / 2));
-  const rows = Math.min(6, 3 + Math.floor((difficulty + 1) / 3));
+  const generationConfig = LEVEL_GENERATION_CONFIGS[levelId - 1] ?? LEVEL_GENERATION_CONFIGS[LEVEL_GENERATION_CONFIGS.length - 1];
+  const cols = generationConfig.cols;
+  const rows = generationConfig.rows;
   const layout: PuzzleKind[][] = Array.from({ length: rows }, () =>
     Array.from({ length: cols }, () => (rng() > 0.5 ? 'corner' : 'straight'))
   );
@@ -330,9 +395,27 @@ function buildProceduralLevel(levelId: number, sessionSeed: number): PuzzleLevel
     Array.from({ length: cols }, () => randomInt(rng, 0, 3) * 90)
   );
 
-  const pathDirection: PathDirection =
-    levelId === 7 ? 'right_to_left' : levelId === 8 ? 'top_to_bottom' : 'left_to_right';
-  const path = buildPath(cols, rows, rng, pathDirection);
+  const pathAttempts: Point[][] = [];
+  const attempts = 18;
+  for (let i = 0; i < attempts; i += 1) {
+    const pathDirection = randomFrom(rng, generationConfig.directions);
+    const path = buildPath(cols, rows, rng, pathDirection, {
+      forwardBias: 2.2 + levelId * 0.08 + rng() * 0.6,
+      wanderBias: 0.9 + levelId * 0.05 + rng() * 1.2,
+      revisitPenalty: 1.2 + rng() * 1.6,
+      maxStepsMultiplier: 7 + levelId * 0.45,
+    });
+    pathAttempts.push(path);
+  }
+  const path = pathAttempts.sort((a, b) => {
+    const score = (candidate: Point[]) => {
+      const turns = countTurns(candidate);
+      const turnDelta = Math.abs(turns - generationConfig.minTurns);
+      const lengthDelta = Math.abs(candidate.length - generationConfig.targetLength);
+      return turnDelta * 1.8 + lengthDelta;
+    };
+    return score(a) - score(b);
+  })[0];
   const start = path[0];
   const goal = path[path.length - 1];
   const pathSet = new Set(path.map(pointKey));
@@ -363,7 +446,7 @@ function buildProceduralLevel(levelId: number, sessionSeed: number): PuzzleLevel
     solvedRotations[current.y][current.x] = tile.rotation;
   }
 
-  const extraScramble = levelId === 7 || levelId === 8 ? 1 : 0;
+  const extraScramble = generationConfig.scrambleBoost;
   const initialRotations = solvedRotations.map((row) =>
     row.map((rotation) => {
       const offset = randomInt(rng, 0, 3) * 90;
@@ -379,18 +462,20 @@ function buildProceduralLevel(levelId: number, sessionSeed: number): PuzzleLevel
   })).filter((point) => !pathSet.has(pointKey(point)) && pointKey(point) !== pointKey(start) && pointKey(point) !== pointKey(goal));
 
   const flowerTileKeys = nonPathTiles
-    .filter(() => rng() > 0.5)
+    .filter(() => rng() > (0.9 - generationConfig.decorDensity))
     .map((point) => `${point.x},${point.y}`);
 
   const obstacleTileKeys = nonPathTiles
-    .filter(() => rng() > 0.7)
+    .filter(() => rng() > (1.05 - generationConfig.decorDensity))
     .map((point) => `${point.x},${point.y}`);
 
   const perspectiveLinks: PerspectiveLink[] = [];
-  if (levelId >= 3 && path.length > 5) {
+  const maxLinks = Math.min(generationConfig.perspectiveLinks, Math.max(0, Math.floor(path.length / 5)));
+  for (let linkIndex = 0; linkIndex < maxLinks; linkIndex += 1) {
     const aIndex = randomInt(rng, 1, Math.max(1, Math.floor(path.length / 3)));
     const bIndex = randomInt(rng, Math.floor(path.length / 2), path.length - 2);
-    const switchTile = nonPathTiles[0];
+    const switchTile = nonPathTiles[linkIndex % Math.max(1, nonPathTiles.length)];
+    if (!path[aIndex] || !path[bIndex]) continue;
     perspectiveLinks.push({
       a: path[aIndex],
       b: path[bIndex],
@@ -410,7 +495,7 @@ function buildProceduralLevel(levelId: number, sessionSeed: number): PuzzleLevel
     id: levelId,
     name: LEVEL_NAMES[levelId - 1] ?? `Garden ${levelId}`,
     vibe: LEVEL_VIBES[levelId - 1] ?? 'Procedurally generated path challenge',
-    expectedMoves: Math.max(6, path.length + randomInt(rng, 2, 8)),
+    expectedMoves: Math.max(6, path.length + countTurns(path) + randomInt(rng, 1, 6)),
     layout,
     initialRotations,
     start,
@@ -948,6 +1033,10 @@ export default function GamesScreen() {
   }, [ambienceDrift, activeLevelIndex]);
 
   useEffect(() => {
+    void markFeatureUsed('games').catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     if (selectedGame !== 'puzzle') return;
 
     levelStartedAtRef.current = Date.now();
@@ -972,6 +1061,7 @@ export default function GamesScreen() {
       moves,
       expectedMoves: activeLevel.expectedMoves,
     });
+    void recordGameCompletion().catch(() => undefined);
   }, [activeLevel.expectedMoves, activeLevel.id, logAnalytics, moves, selectedGame, showComplete]);
 
   useEffect(() => {

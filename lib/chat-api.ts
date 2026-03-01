@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system/legacy';
-import { getAccessToken } from '@/lib/auth';
+import { getAccessToken, supabase } from '@/utils/supabase';
 import { getProfileSnapshot } from '@/lib/profile-store';
 import { ensureAudioDirectory, getAudioDirectory } from '@/lib/audio-manager';
 
@@ -25,6 +25,9 @@ type Phase1Context = {
 };
 
 let cachedContext: Phase1Context | null = null;
+let cachedApiStorageMode: 'postgres' | 'file' | 'unknown' | null = null;
+
+type ApiHealthResponse = { storage?: string };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -36,8 +39,155 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+function makeUuid() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  // UUID v4 fallback for environments without crypto.randomUUID
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = char === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
+async function getApiStorageMode(accessToken: string): Promise<'postgres' | 'file' | 'unknown'> {
+  if (cachedApiStorageMode) return cachedApiStorageMode;
+  try {
+    const health = await fetchJson<ApiHealthResponse>(`${CHAT_API_URL}/health`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (health.storage === 'postgres') {
+      cachedApiStorageMode = 'postgres';
+      return 'postgres';
+    }
+    if (health.storage === 'file') {
+      cachedApiStorageMode = 'file';
+      return 'file';
+    }
+  } catch {
+    // Ignore probe failures and use unknown fallback mode.
+  }
+  cachedApiStorageMode = 'unknown';
+  return 'unknown';
+}
+
+async function getOrCreateSupabaseUserId() {
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError || !auth.user) return null;
+  const authUserId = auth.user.id;
+
+  const { data: existing, error: existingError } = await supabase
+    .from('users')
+    .select('id')
+    .eq('auth_user_id', authUserId)
+    .maybeSingle<{ id: string }>();
+  if (existingError) throw existingError;
+  if (existing) return existing.id;
+
+  const { error: insertError } = await supabase.from('users').insert({
+    id: authUserId,
+    created_at: new Date().toISOString(),
+    auth_user_id: authUserId,
+    display_name: 'Friend',
+    locale: 'en-US',
+    timezone: 'America/New_York',
+  });
+  if (insertError && insertError.code !== '23505') throw insertError;
+
+  const { data: created, error: createdError } = await supabase
+    .from('users')
+    .select('id')
+    .eq('auth_user_id', authUserId)
+    .single<{ id: string }>();
+  if (createdError) throw createdError;
+  return created.id;
+}
+
+async function ensureConversationSessionForSupabase(userId: string, sessionId: string, mode: ChatMode) {
+  const { data: existing, error: existingError } = await supabase
+    .from('conversation_sessions')
+    .select('id')
+    .eq('id', sessionId)
+    .eq('user_id', userId)
+    .maybeSingle<{ id: string }>();
+  if (existingError) throw existingError;
+  if (existing) return;
+
+  const { error: insertError } = await supabase.from('conversation_sessions').insert({
+    id: sessionId,
+    user_id: userId,
+    started_at: new Date().toISOString(),
+    mode,
+  });
+  if (insertError && insertError.code !== '23505') throw insertError;
+}
+
+async function insertSupabaseMessage(sessionId: string, role: 'user' | 'assistant', text: string) {
+  const { error } = await supabase.from('messages').insert({
+    id: makeUuid(),
+    session_id: sessionId,
+    role,
+    text,
+    created_at: new Date().toISOString(),
+    safety_flags: {},
+  });
+  if (error) throw error;
+}
+
+async function upsertSupabaseMemoryFact(userId: string, category: string, factKey: string, factValue: string, source: string) {
+  const { error } = await supabase.from('memory_facts').upsert(
+    {
+      id: makeUuid(),
+      user_id: userId,
+      category,
+      fact_key: factKey,
+      fact_value: factValue,
+      confidence: 0.6,
+      source,
+      last_seen_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,fact_key' }
+  );
+  if (error) throw error;
+}
+
+async function extractAndUpsertMemoryFacts(userId: string, userText: string) {
+  const text = userText.trim();
+  if (!text) return;
+  const lower = text.toLowerCase();
+  const preferenceMatch = text.match(/(?:i like|i love|my favorite is)\s+(.+)/i);
+  if (preferenceMatch?.[1]) {
+    await upsertSupabaseMemoryFact(userId, 'preference', 'general_preference', preferenceMatch[1].trim(), 'chat');
+  }
+  if (lower.includes('anxious about') || lower.includes('stressed about') || lower.includes('worried about')) {
+    await upsertSupabaseMemoryFact(userId, 'trigger', 'reported_trigger', text, 'chat');
+  }
+  if (lower.includes('doctor') || lower.includes('appointment')) {
+    await upsertSupabaseMemoryFact(userId, 'advocacy', 'medical_visit_context', text, 'chat');
+  }
+}
+
+async function persistChatFallbackToSupabase(params: {
+  mode: ChatMode;
+  sessionId: string;
+  latestUserMessage: string;
+  assistantReply: string;
+}) {
+  const supabaseUserId = await getOrCreateSupabaseUserId();
+  if (!supabaseUserId) return;
+  await ensureConversationSessionForSupabase(supabaseUserId, params.sessionId, params.mode);
+  if (params.latestUserMessage.trim()) {
+    await insertSupabaseMessage(params.sessionId, 'user', params.latestUserMessage.trim());
+    await extractAndUpsertMemoryFacts(supabaseUserId, params.latestUserMessage);
+  }
+  await insertSupabaseMessage(params.sessionId, 'assistant', params.assistantReply.trim());
+}
+
 export async function ensurePhase1User(): Promise<Phase1Context> {
-  const accessToken = getAccessToken();
+  const accessToken = await getAccessToken();
   if (!accessToken) {
     throw new Error('User is not authenticated');
   }
@@ -95,7 +245,7 @@ const profileSnapshotForApi = () => {
 };
 
 export async function sendChatMessage(messages: ChatMessage[]): Promise<string> {
-  const accessToken = getAccessToken();
+  const accessToken = await getAccessToken();
   const profileSnapshot = profileSnapshotForApi();
 
   if (accessToken) {
@@ -125,7 +275,21 @@ export async function sendChatMessage(messages: ChatMessage[]): Promise<string> 
       context.sessionId = v1Response.sessionId;
     }
 
-    return v1Response.reply ?? "I'm here for you. Would you like to tell me more?";
+    const safeReply = v1Response.reply ?? "I'm here for you. Would you like to tell me more?";
+    const modeUsed: ChatMode = mode;
+    const storageMode = await getApiStorageMode(accessToken);
+    if (v1Response.sessionId && storageMode !== 'postgres') {
+      persistChatFallbackToSupabase({
+        mode: modeUsed,
+        sessionId: v1Response.sessionId,
+        latestUserMessage,
+        assistantReply: safeReply,
+      }).catch((error) => {
+        console.warn('[chat persistence fallback] failed', error);
+      });
+    }
+
+    return safeReply;
   }
 
   // Demo fallback for non-authenticated sessions.
@@ -145,11 +309,11 @@ export async function fetchTTSAudio(
   voice: TTSVoice = 'sage',
   options?: { skipHumanize?: boolean }
 ): Promise<string> {
-  const url = getAccessToken() ? `${CHAT_API_URL}/v1/speech` : `${CHAT_API_URL}/speech`;
+  const token = await getAccessToken();
+  const url = token ? `${CHAT_API_URL}/v1/speech` : `${CHAT_API_URL}/speech`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(url, {

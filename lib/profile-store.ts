@@ -21,20 +21,20 @@ export type UserProfile = {
 };
 
 const defaultProfile: UserProfile = {
-  displayName: 'Friend',
-  calmAlias: 'Steady Explorer',
+  displayName: '',
+  calmAlias: '',
   avatarSpirit: 'snowleopard',
-  favoriteAnimal: 'Snow leopard',
-  comfortPhrase: 'I can take this one breath at a time.',
-  supportGoal: 'Help me de-stress quickly after a hard moment.',
+  favoriteAnimal: '',
+  comfortPhrase: '',
+  supportGoal: '',
   copingStyle: 'breathing',
-  sensoryReset: 'Nature sounds',
-  celebrationStyle: 'Small daily wins',
+  sensoryReset: '',
+  celebrationStyle: '',
   triggerNotes: '',
   checkInWindow: 'evening',
-  streakDays: 14,
+  streakDays: 0,
   currentBadge: 'Sprout',
-  calmPoints: 1260,
+  calmPoints: 0,
 };
 
 let profileState: UserProfile = defaultProfile;
