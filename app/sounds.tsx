@@ -96,7 +96,8 @@ export default function SoundsScreen() {
     try {
       stopAudio();
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
-      const player = createAudioPlayer(SOUND_SOURCES[soundId], { loop: true });
+      const player = createAudioPlayer(SOUND_SOURCES[soundId]);
+      player.loop = true;
       playerRef.current = player;
       player.play();
       setActiveSound(soundId);

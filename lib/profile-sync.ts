@@ -30,6 +30,12 @@ type ProfileRow = {
   profile_completed: boolean | null;
   badges: unknown;
   features_used: unknown;
+  reward_unlocked_video_ids: unknown;
+  reward_watched_video_ids: unknown;
+  reward_claimed_milestones: unknown;
+  last_reward_watched_at: string | null;
+  last_reward_video_id: string | null;
+  level14_completions: number | null;
   stress_triggers: unknown;
   preferred_support_style: unknown;
   advocacy_needs: unknown;
@@ -49,6 +55,13 @@ type ProfileStats = {
 };
 
 type FeatureKey = 'profile' | 'avatar' | 'games' | 'sounds';
+
+export type RewardVideoDecision = {
+  selectedVideoKey: string;
+  isNewVideo: boolean;
+  unlockedMilestone: string | null;
+  nextNewVideoAt: string | null;
+};
 
 const BADGE_SPROUT = 'Sprout';
 const FEATURE_BADGE_KEYS: FeatureKey[] = ['profile', 'avatar', 'games', 'sounds'];
@@ -97,6 +110,10 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 function ensureStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function uniqStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
 }
 
 function parseLegacyStats(value: unknown, fallbackStreak: number, fallbackPoints: number): ProfileStats {
@@ -181,6 +198,50 @@ function pickCurrentBadge(badges: string[]): string {
   return badges[badges.length - 1] ?? BADGE_SPROUT;
 }
 
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function nowIsoTimestamp() {
+  return new Date().toISOString();
+}
+
+function plusHours(isoTimestamp: string, hours: number): string {
+  const date = new Date(isoTimestamp);
+  date.setHours(date.getHours() + hours);
+  return date.toISOString();
+}
+
+function canWatchNewVideo(lastWatchedAt: string | null): boolean {
+  if (!lastWatchedAt) return true;
+  const last = new Date(lastWatchedAt).getTime();
+  if (!Number.isFinite(last)) return true;
+  return Date.now() - last >= 24 * 60 * 60 * 1000;
+}
+
+function buildRewardMilestones(input: {
+  level14Completions: number;
+  currentStreak: number;
+  gamesCompleted: number;
+  calmPoints: number;
+  badges: string[];
+}): string[] {
+  const milestones: string[] = [];
+  if (input.level14Completions >= 1) milestones.push('level14:first');
+  if (input.currentStreak >= 3) milestones.push('streak:3');
+  if (input.currentStreak >= 7) milestones.push('streak:7');
+  if (input.currentStreak >= 30) milestones.push('streak:30');
+
+  const gamesBuckets = Math.floor(input.gamesCompleted / 10);
+  for (let i = 1; i <= gamesBuckets; i += 1) milestones.push(`games:${i * 10}`);
+
+  const pointsBuckets = Math.floor(input.calmPoints / 100);
+  for (let i = 1; i <= pointsBuckets; i += 1) milestones.push(`points:${i * 100}`);
+
+  for (const badge of input.badges) milestones.push(`badge:${slugify(badge)}`);
+  return uniqStrings(milestones);
+}
+
 export function calculateProfileCompletion(profile: UserProfile): number {
   const requiredFields = [
     profile.displayName,
@@ -260,6 +321,12 @@ async function ensureProfileRow(userId: string) {
     profile_completed: false,
     badges: [BADGE_SPROUT],
     features_used: [],
+    reward_unlocked_video_ids: [],
+    reward_watched_video_ids: [],
+    reward_claimed_milestones: [],
+    last_reward_watched_at: null,
+    last_reward_video_id: null,
+    level14_completions: 0,
     updated_at: new Date().toISOString(),
   });
   if (insertError && insertError.code !== '23505') throw insertError;
@@ -270,6 +337,7 @@ async function fetchProfileRow(userId: string): Promise<ProfileRow | null> {
     .from('profiles')
     .select(
       'user_id, calm_alias, avatar_spirit, favorite_animal, comfort_phrase, support_goal, coping_style, sensory_reset, celebration_style, trigger_notes, check_in_window, streak_days, current_badge, calm_points, current_streak, longest_streak, last_visit_date, app_visits, chat_sessions, games_completed, profile_completed, badges, features_used, stress_triggers, preferred_support_style, advocacy_needs, updated_at'
+      + ', reward_unlocked_video_ids, reward_watched_video_ids, reward_claimed_milestones, last_reward_watched_at, last_reward_video_id, level14_completions'
     )
     .eq('user_id', userId)
     .maybeSingle<ProfileRow>();
@@ -469,4 +537,91 @@ export async function markFeatureUsed(feature: FeatureKey) {
       },
     };
   });
+}
+
+export async function consumeLevel14Reward(availableVideoKeys: string[]): Promise<RewardVideoDecision | null> {
+  const appUser = await getOrCreateAppUser();
+  if (!appUser) return null;
+  await ensureProfileRow(appUser.id);
+  const row = await fetchProfileRow(appUser.id);
+  if (!row) return null;
+
+  const uniqueAvailable = uniqStrings(availableVideoKeys);
+  if (uniqueAvailable.length === 0) return null;
+
+  const stats = rowToStats(row);
+  const calmPoints = ensureNumber(row.calm_points, 0);
+  const level14Completions = ensureNumber(row.level14_completions, 0) + 1;
+
+  const unlocked = uniqStrings(ensureStringArray(row.reward_unlocked_video_ids));
+  const watched = uniqStrings(ensureStringArray(row.reward_watched_video_ids));
+  const claimed = uniqStrings(ensureStringArray(row.reward_claimed_milestones));
+  const activeBadges = normalizeBadges(stats, calmPoints);
+
+  const milestoneQueue = buildRewardMilestones({
+    level14Completions,
+    currentStreak: stats.currentStreak,
+    gamesCompleted: stats.gamesCompleted,
+    calmPoints,
+    badges: activeBadges,
+  });
+  const nextMilestone = milestoneQueue.find((milestone) => !claimed.includes(milestone)) ?? null;
+
+  let unlockedMilestone: string | null = null;
+  if (nextMilestone) {
+    const nextVideo = uniqueAvailable.find((key) => !unlocked.includes(key));
+    if (nextVideo) {
+      unlocked.push(nextVideo);
+      unlockedMilestone = nextMilestone;
+    }
+    claimed.push(nextMilestone);
+  }
+
+  if (unlocked.length === 0) {
+    unlocked.push(uniqueAvailable[0]);
+  }
+
+  const lastWatchedAt = row.last_reward_watched_at;
+  const canWatchNew = canWatchNewVideo(lastWatchedAt);
+  const unseenUnlocked = unlocked.filter((key) => !watched.includes(key));
+
+  let selectedVideoKey: string;
+  let isNewVideo = false;
+  let nextNewVideoAt: string | null = null;
+  const nowIso = nowIsoTimestamp();
+
+  if (canWatchNew && unseenUnlocked.length > 0) {
+    selectedVideoKey = unseenUnlocked[0];
+    watched.push(selectedVideoKey);
+    isNewVideo = true;
+  } else {
+    selectedVideoKey =
+      row.last_reward_video_id && uniqueAvailable.includes(row.last_reward_video_id)
+        ? row.last_reward_video_id
+        : unlocked[0];
+    if (!canWatchNew && lastWatchedAt) {
+      nextNewVideoAt = plusHours(lastWatchedAt, 24);
+    }
+  }
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({
+      reward_unlocked_video_ids: uniqStrings(unlocked),
+      reward_watched_video_ids: uniqStrings(watched),
+      reward_claimed_milestones: uniqStrings(claimed),
+      last_reward_watched_at: isNewVideo ? nowIso : row.last_reward_watched_at,
+      last_reward_video_id: selectedVideoKey,
+      level14_completions: level14Completions,
+      updated_at: nowIso,
+    })
+    .eq('user_id', appUser.id);
+  if (error) throw error;
+
+  return {
+    selectedVideoKey,
+    isNewVideo,
+    unlockedMilestone,
+    nextNewVideoAt,
+  };
 }

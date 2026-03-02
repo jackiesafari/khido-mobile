@@ -7,6 +7,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { MaterialIcons } from '@expo/vector-icons';
 import { ThemedView } from '@/components/themed-view';
 import { logGardenEvent } from '@/lib/garden-analytics';
+import { consumeLevel14Reward, type RewardVideoDecision } from '@/lib/profile-sync';
 import { Routes } from '@/types/navigation';
 
 type RewardSource = {
@@ -25,8 +26,6 @@ const DEFAULT_YOUTUBE_REWARDS: RewardSource[] = [
   { key: 'yt-waterfall-rainbow', kind: 'youtube', title: 'Waterfall + Rainbow', uri: 'https://www.youtube.com/watch?v=IS7Gn3id3us' },
   { key: 'yt-nature-calm', kind: 'youtube', title: 'Calm Nature Video', uri: 'https://www.youtube.com/watch?v=eKFTSSKCzWA' },
 ];
-
-let lastRewardKey: string | null = null;
 
 type ExtraConfig = {
   supabaseUrl?: string | null;
@@ -87,37 +86,40 @@ function buildConfiguredRewards(): { streams: RewardSource[]; youtubes: RewardSo
   return { streams, youtubes };
 }
 
-function chooseNonRepeating(candidates: RewardSource[]): RewardSource {
-  if (candidates.length === 0) {
-    return DEFAULT_STREAMING_REWARDS[0];
-  }
-  if (candidates.length === 1) {
-    lastRewardKey = candidates[0].key;
-    return candidates[0];
-  }
-
-  let selected = candidates[Math.floor(Math.random() * candidates.length)];
-  let guard = 0;
-  while (selected.key === lastRewardKey && guard < 12) {
-    selected = candidates[Math.floor(Math.random() * candidates.length)];
-    guard += 1;
-  }
-  lastRewardKey = selected.key;
-  return selected;
+function formatUnlockMilestone(milestone: string | null): string | null {
+  if (!milestone) return null;
+  const [kind, value] = milestone.split(':');
+  if (kind === 'level14') return 'First complete journey';
+  if (kind === 'streak') return `${value}-day streak`;
+  if (kind === 'games') return `${value} games completed`;
+  if (kind === 'points') return `${value} Calm Points`;
+  if (kind === 'badge') return 'New badge milestone';
+  return null;
 }
 
 export default function GardenRewardScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [didFinish, setDidFinish] = useState(false);
+  const [rewardDecision, setRewardDecision] = useState<RewardVideoDecision | null>(null);
   const [usingYoutubeFallback, setUsingYoutubeFallback] = useState(false);
   const [hasTriedYoutubeFallback, setHasTriedYoutubeFallback] = useState(false);
   const affirmationOpacity = useRef(new Animated.Value(0)).current;
 
   const rewardPools = useMemo(() => buildConfiguredRewards(), []);
-  const selectedStream = useMemo(() => chooseNonRepeating(rewardPools.streams), [rewardPools.streams]);
-  const backupYoutube = useMemo(() => chooseNonRepeating(rewardPools.youtubes), [rewardPools.youtubes]);
+  const fallbackStream = useMemo(
+    () => rewardPools.streams[0] ?? DEFAULT_STREAMING_REWARDS[0],
+    [rewardPools.streams]
+  );
+  const allRewardsByKey = useMemo(() => {
+    const map = new Map<string, RewardSource>();
+    for (const reward of [...rewardPools.streams, ...rewardPools.youtubes]) {
+      map.set(reward.key, reward);
+    }
+    return map;
+  }, [rewardPools.streams, rewardPools.youtubes]);
+  const [selectedReward, setSelectedReward] = useState<RewardSource>(fallbackStream);
 
-  const rewardPlayer = useVideoPlayer({ uri: selectedStream.uri }, (player) => {
+  const rewardPlayer = useVideoPlayer({ uri: selectedReward.kind === 'stream' ? selectedReward.uri : fallbackStream.uri }, (player) => {
     player.loop = false;
     player.muted = false;
     player.play();
@@ -137,7 +139,7 @@ export default function GardenRewardScreen() {
       'This moment is yours.',
     ];
 
-    const lowerTitle = selectedStream.title.toLowerCase();
+    const lowerTitle = selectedReward.title.toLowerCase();
     if (lowerTitle.includes('waterfall') || lowerTitle.includes('river')) {
       base.push('Let the water carry the noise away.');
       base.push('You are allowed to flow at your own pace.');
@@ -148,7 +150,7 @@ export default function GardenRewardScreen() {
     }
     const nextIndex = Math.floor(Math.random() * base.length);
     return base[nextIndex];
-  }, [selectedStream.title]);
+  }, [selectedReward.title]);
 
   const animateAffirmation = useCallback(() => {
     Animated.sequence([
@@ -162,11 +164,10 @@ export default function GardenRewardScreen() {
     animateAffirmation();
   }, [animateAffirmation]);
 
-  const openYoutubeBackup = useCallback(async () => {
-    if (hasTriedYoutubeFallback) return;
+  const openYoutubeBackup = useCallback(async (youtubeSource: RewardSource) => {
     try {
       setHasTriedYoutubeFallback(true);
-      await openBrowserAsync(backupYoutube.uri, {
+      await openBrowserAsync(youtubeSource.uri, {
         presentationStyle: WebBrowserPresentationStyle.FULL_SCREEN,
       });
       setDidFinish(true);
@@ -176,16 +177,60 @@ export default function GardenRewardScreen() {
         eventType: 'tile_tap_pattern',
         payload: {
           source: 'reward_video_opened_youtube',
-          youtubeKey: backupYoutube.key,
-          youtubeUrl: backupYoutube.uri,
+          youtubeKey: youtubeSource.key,
+          youtubeUrl: youtubeSource.uri,
         },
       });
     } finally {
       setIsLoading(false);
     }
-  }, [backupYoutube.key, backupYoutube.uri, hasTriedYoutubeFallback]);
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const resolveReward = async () => {
+      const candidateKeys =
+        rewardPools.streams.length > 0
+          ? rewardPools.streams.map((reward) => reward.key)
+          : rewardPools.youtubes.map((reward) => reward.key);
+
+      const decision = await consumeLevel14Reward(candidateKeys);
+      if (cancelled) return;
+      setRewardDecision(decision);
+
+      if (decision?.selectedVideoKey) {
+        const configured = allRewardsByKey.get(decision.selectedVideoKey);
+        if (configured) {
+          setSelectedReward(configured);
+          return;
+        }
+      }
+      setSelectedReward(fallbackStream);
+    };
+
+    resolveReward().catch(() => {
+      if (!cancelled) {
+        setSelectedReward(fallbackStream);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [allRewardsByKey, fallbackStream, rewardPools.streams, rewardPools.youtubes]);
+
+  const backupYoutube = useMemo(
+    () => rewardPools.youtubes[0] ?? DEFAULT_YOUTUBE_REWARDS[0],
+    [rewardPools.youtubes]
+  );
+
+  useEffect(() => {
+    if (selectedReward.kind !== 'stream') {
+      if (!hasTriedYoutubeFallback) {
+        void openYoutubeBackup(selectedReward);
+      }
+      return;
+    }
+
     const statusSub = rewardPlayer.addListener('statusChange', ({ status, error }) => {
       if (status === 'readyToPlay') {
         setIsLoading(false);
@@ -201,10 +246,10 @@ export default function GardenRewardScreen() {
           eventType: 'tile_tap_pattern',
           payload: {
             source: 'reward_video_fallback_youtube',
-            failedStreamKey: selectedStream.key,
+            failedStreamKey: selectedReward.key,
           },
         });
-        openYoutubeBackup().catch(() => undefined);
+        void openYoutubeBackup(backupYoutube);
       }
     });
 
@@ -215,7 +260,7 @@ export default function GardenRewardScreen() {
         sessionSeed: 0,
         levelId: 14,
         eventType: 'tile_tap_pattern',
-        payload: { source: 'reward_video_finished', rewardKey: selectedStream.key },
+        payload: { source: 'reward_video_finished', rewardKey: selectedReward.key },
       });
     });
 
@@ -223,7 +268,21 @@ export default function GardenRewardScreen() {
       statusSub.remove();
       endSub.remove();
     };
-  }, [openYoutubeBackup, rewardPlayer, selectedStream.key, usingYoutubeFallback]);
+  }, [backupYoutube, hasTriedYoutubeFallback, openYoutubeBackup, rewardPlayer, selectedReward, usingYoutubeFallback]);
+
+  const rewardSubtitle = useMemo(() => {
+    if (usingYoutubeFallback) return 'Streaming reward unavailable: opened YouTube fallback.';
+    if (!rewardDecision) return selectedReward.title;
+    if (rewardDecision.isNewVideo) {
+      const milestone = formatUnlockMilestone(rewardDecision.unlockedMilestone);
+      return milestone ? `New reward unlocked: ${milestone}` : 'New reward unlocked today.';
+    }
+    if (rewardDecision.nextNewVideoAt) {
+      const unlockAt = new Date(rewardDecision.nextNewVideoAt).toLocaleString();
+      return `Replay unlocked. Your next new reward unlocks after ${unlockAt}.`;
+    }
+    return selectedReward.title;
+  }, [rewardDecision, selectedReward.title, usingYoutubeFallback]);
 
   const handleContinue = () => {
     router.replace(Routes.GAMES);
@@ -233,7 +292,14 @@ export default function GardenRewardScreen() {
     <SafeAreaView style={styles.container}>
       <ThemedView style={styles.background} lightColor="#0B1C2C" darkColor="#0B1C2C">
         <View style={styles.videoWrap}>
-          <VideoView player={rewardPlayer} style={styles.video} contentFit="cover" nativeControls={false} />
+          {selectedReward.kind === 'stream' ? (
+            <VideoView player={rewardPlayer} style={styles.video} contentFit="cover" nativeControls={false} />
+          ) : (
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator size="large" color="#FFFFFF" />
+              <Text style={styles.loadingText}>Opening your reward in browser...</Text>
+            </View>
+          )}
 
           <View style={styles.affirmationWrap} pointerEvents="none">
             <Animated.View style={[styles.affirmationCloud, { opacity: affirmationOpacity }]}>
@@ -254,9 +320,7 @@ export default function GardenRewardScreen() {
 
         <View style={styles.footer}>
           <Text style={styles.title}>Great job finishing all 14 levels</Text>
-          <Text style={styles.subtitle}>
-            {usingYoutubeFallback ? 'Streaming reward unavailable: opened YouTube fallback.' : selectedStream.title}
-          </Text>
+          <Text style={styles.subtitle}>{rewardSubtitle}</Text>
 
           {didFinish ? (
             <TouchableOpacity style={styles.continueButton} activeOpacity={0.8} onPress={handleContinue}>

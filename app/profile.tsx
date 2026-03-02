@@ -209,8 +209,14 @@ export default function ProfileScreen() {
                 <Text style={styles.statValue}>{draft.streakDays}</Text>
                 <Text style={styles.statLabel}>Streak</Text>
               </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statValue}>{draft.currentBadge}</Text>
+              <View style={[styles.statCard, styles.badgeStatCard]}>
+                <Text
+                  style={[styles.statValue, styles.badgeStatValue]}
+                  numberOfLines={2}
+                  lineBreakStrategyIOS="push-out"
+                  textBreakStrategy="highQuality">
+                  {draft.currentBadge}
+                </Text>
                 <Text style={styles.statLabel}>Badge</Text>
               </View>
               <View style={styles.statCard}>
@@ -492,11 +498,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(71, 85, 105, 0.6)',
   },
+  badgeStatCard: {
+    flex: 1.2,
+    paddingHorizontal: 10,
+  },
   statValue: {
     color: '#F8FAFC',
     fontSize: 18,
     fontWeight: '800',
     textAlign: 'center',
+  },
+  badgeStatValue: {
+    fontSize: 14,
+    lineHeight: 19,
+    flexShrink: 1,
+    minHeight: 38,
+    textAlignVertical: 'center',
   },
   statLabel: {
     color: '#94A3B8',
