@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "com.khido.app",
       "usesAppleSignIn": true,
       "supportsTablet": true
     },

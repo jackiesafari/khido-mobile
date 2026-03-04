@@ -1,10 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui/button';
 import { applyDailyVisitReward } from '@/lib/profile-sync';
-import { sendEmailOtp, signInWithAppleIdentity, verifyEmailOtp } from '@/utils/supabase';
+import {
+  sendEmailOtp,
+  signInWithAppleIdentity,
+  signInWithGoogleIdentity,
+  verifyEmailOtp,
+} from '@/utils/supabase';
 import { Routes } from '@/types/navigation';
 
 let AppleAuthentication: any = null;
@@ -15,7 +20,20 @@ try {
   AppleAuthentication = null;
 }
 
+let GoogleAuth: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  GoogleAuth = require('@react-native-google-signin/google-signin');
+} catch {
+  GoogleAuth = null;
+}
+const GoogleSignin = GoogleAuth?.GoogleSignin;
+const GoogleSigninButton = GoogleAuth?.GoogleSigninButton;
+const googleStatusCodes = GoogleAuth?.statusCodes;
+
 export default function AuthScreen() {
+  const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '';
+  const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '';
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [step, setStep] = useState<'email' | 'verify'>('email');
@@ -23,6 +41,21 @@ export default function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const canUseAppleSignIn = Platform.OS === 'ios' && Boolean(AppleAuthentication?.AppleAuthenticationButton);
+  const canUseGoogleSignIn =
+    (Platform.OS === 'ios' || Platform.OS === 'android') &&
+    Boolean(GoogleSignin) &&
+    Boolean(GoogleSigninButton) &&
+    Boolean(googleWebClientId) &&
+    (Platform.OS !== 'ios' || Boolean(googleIosClientId));
+
+  useEffect(() => {
+    if (!canUseGoogleSignIn) return;
+    GoogleSignin.configure({
+      webClientId: googleWebClientId,
+      iosClientId: Platform.OS === 'ios' ? googleIosClientId : undefined,
+      scopes: ['email', 'profile'],
+    });
+  }, [canUseGoogleSignIn, googleIosClientId, googleWebClientId]);
 
   const handleSendCode = async () => {
     const normalizedEmail = email.trim().toLowerCase();
@@ -81,7 +114,13 @@ export default function AuthScreen() {
       }
       await signInWithAppleIdentity({
         identityToken: credential.identityToken,
-        authorizationCode: credential.authorizationCode || undefined,
+        fullName: credential.fullName
+          ? {
+              givenName: credential.fullName.givenName || null,
+              middleName: credential.fullName.middleName || null,
+              familyName: credential.fullName.familyName || null,
+            }
+          : undefined,
       });
       await applyDailyVisitReward().catch(() => null);
       router.replace(Routes.DASHBOARD);
@@ -91,6 +130,63 @@ export default function AuthScreen() {
       } else {
         setError(err instanceof Error ? err.message : 'Apple sign-in failed.');
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    if (!canUseGoogleSignIn) {
+      setError('Google sign-in is not configured yet.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      if (Platform.OS === 'android') {
+        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      }
+
+      const result = await GoogleSignin.signIn();
+      if (result.type !== 'success') {
+        setMessage('Google sign-in was canceled.');
+        return;
+      }
+
+      const idToken = result.data.idToken;
+      if (!idToken) {
+        throw new Error('Google sign-in did not return an ID token.');
+      }
+
+      await signInWithGoogleIdentity({
+        idToken,
+        profile: {
+          name: result.data.user.name,
+          givenName: result.data.user.givenName,
+          familyName: result.data.user.familyName,
+          email: result.data.user.email,
+        },
+      });
+
+      await applyDailyVisitReward().catch(() => null);
+      router.replace(Routes.DASHBOARD);
+    } catch (err: unknown) {
+      const code = (err as { code?: string } | null)?.code;
+      if (code === googleStatusCodes?.SIGN_IN_CANCELLED) {
+        setMessage('Google sign-in was canceled.');
+        return;
+      }
+      if (code === googleStatusCodes?.IN_PROGRESS) {
+        setMessage('Google sign-in is already in progress.');
+        return;
+      }
+      if (code === googleStatusCodes?.PLAY_SERVICES_NOT_AVAILABLE) {
+        setError('Google Play Services is unavailable on this device.');
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Google sign-in failed.');
     } finally {
       setLoading(false);
     }
@@ -156,6 +252,18 @@ export default function AuthScreen() {
                 cornerRadius={8}
                 style={styles.appleButton}
                 onPress={handleAppleSignIn}
+              />
+            </View>
+          )}
+
+          {canUseGoogleSignIn && (
+            <View style={styles.googleButtonWrapper}>
+              <GoogleSigninButton
+                style={styles.googleButton}
+                size={GoogleSigninButton.Size.Wide}
+                color={GoogleSigninButton.Color.Light}
+                onPress={handleGoogleSignIn}
+                disabled={loading}
               />
             </View>
           )}
@@ -243,5 +351,13 @@ const styles = StyleSheet.create({
   appleButton: {
     width: '100%',
     height: 44,
+  },
+  googleButtonWrapper: {
+    marginTop: 4,
+    alignItems: 'center',
+  },
+  googleButton: {
+    width: '100%',
+    height: 48,
   },
 });

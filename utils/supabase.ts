@@ -21,7 +21,27 @@ function isInvalidRefreshTokenError(error: unknown): boolean {
   return typeof maybeMessage === 'string' && maybeMessage.toLowerCase().includes('invalid refresh token')
 }
 
+function getGoogleSignin() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const googleAuth = require('@react-native-google-signin/google-signin')
+    return googleAuth?.GoogleSignin ?? null
+  } catch {
+    return null
+  }
+}
+
 async function clearLocalAuthState() {
+  const googleSignin = getGoogleSignin()
+  try {
+    if (googleSignin?.hasPreviousSignIn?.()) {
+      await googleSignin.signOut().catch(() => null)
+      await googleSignin.revokeAccess().catch(() => null)
+    }
+  } catch {
+    // Ignore provider cleanup failures.
+  }
+
   try {
     await supabase.auth.signOut({ scope: 'local' })
   } catch {
@@ -76,8 +96,12 @@ export async function verifyEmailOtp(email: string, token: string) {
 
 export type AppleIdentityPayload = {
   identityToken: string
-  authorizationCode?: string
   nonce?: string
+  fullName?: {
+    givenName?: string | null
+    middleName?: string | null
+    familyName?: string | null
+  }
 }
 
 export async function signInWithAppleIdentity(payload: AppleIdentityPayload) {
@@ -88,6 +112,62 @@ export async function signInWithAppleIdentity(payload: AppleIdentityPayload) {
   })
 
   if (error) throw error
+
+  const givenName = payload.fullName?.givenName?.trim() || ''
+  const middleName = payload.fullName?.middleName?.trim() || ''
+  const familyName = payload.fullName?.familyName?.trim() || ''
+  const fullName = [givenName, middleName, familyName].filter(Boolean).join(' ').trim()
+
+  // Apple only provides name fields on first successful authorization.
+  if (fullName) {
+    await supabase.auth.updateUser({
+      data: {
+        full_name: fullName,
+        given_name: givenName || null,
+        family_name: familyName || null,
+      },
+    })
+  }
+
+  return data.session
+}
+
+// ─── Google Sign In ───────────────────────────────────────────────────────────
+
+export type GoogleIdentityPayload = {
+  idToken: string
+  profile?: {
+    name?: string | null
+    givenName?: string | null
+    familyName?: string | null
+    email?: string | null
+  }
+}
+
+export async function signInWithGoogleIdentity(payload: GoogleIdentityPayload) {
+  const { data, error } = await supabase.auth.signInWithIdToken({
+    provider: 'google',
+    token: payload.idToken,
+  })
+
+  if (error) throw error
+
+  const fullName = payload.profile?.name?.trim() || ''
+  const givenName = payload.profile?.givenName?.trim() || ''
+  const familyName = payload.profile?.familyName?.trim() || ''
+  const email = payload.profile?.email?.trim().toLowerCase() || ''
+
+  if (fullName || givenName || familyName || email) {
+    await supabase.auth.updateUser({
+      data: {
+        full_name: fullName || null,
+        given_name: givenName || null,
+        family_name: familyName || null,
+        email_from_google: email || null,
+      },
+    })
+  }
+
   return data.session
 }
 
