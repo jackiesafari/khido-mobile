@@ -32,6 +32,10 @@ module.exports = {
   ...appJson,
   expo: {
     ...appJson.expo,
+    android: {
+      ...(appJson.expo.android || {}),
+      package: 'com.khido.app',
+    },
     plugins: [...basePlugins, 'expo-audio', 'expo-video'],
     extra: {
       rewardVideoPaths: process.env.EXPO_PUBLIC_REWARD_VIDEO_PATHS
